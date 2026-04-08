@@ -14,11 +14,28 @@ ok()   { echo -e "${GREEN}✅ $1${NC}"; }
 info() { echo -e "${YELLOW}➜  $1${NC}"; }
 
 # ── Find USB ──────────────────────────────────────────────────────────────────
-echo ""
-echo "Available removable drives:"
-lsblk -o NAME,SIZE,MOUNTPOINT,LABEL | grep -v "^loop"
-echo ""
-read -rp "Enter USB mount path (e.g. /media/gymnott/MYUSB): " USB_PATH
+info "Detecting mounted USB drives..."
+
+# Collect mounted removable drives
+USB_LIST=()
+while IFS= read -r line; do
+    USB_LIST+=("$line")
+done < <(lsblk -o NAME,TRAN,MOUNTPOINT -nr | awk '$2=="usb" && $3!="" {print $3}')
+
+if [ ${#USB_LIST[@]} -eq 0 ]; then
+    echo "No USB drives detected. Please enter path manually:"
+    read -rp "Mount path: " USB_PATH
+elif [ ${#USB_LIST[@]} -eq 1 ]; then
+    USB_PATH="${USB_LIST[0]}"
+    ok "Auto-detected USB: $USB_PATH"
+else
+    echo "Multiple USB drives found:"
+    for i in "${!USB_LIST[@]}"; do
+        echo "  [$i] ${USB_LIST[$i]}"
+    done
+    read -rp "Select number: " idx
+    USB_PATH="${USB_LIST[$idx]}"
+fi
 
 [ -d "$USB_PATH" ] || { echo "Path not found: $USB_PATH"; exit 1; }
 
