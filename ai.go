@@ -72,8 +72,25 @@ func clearHistory() {
 	chatHistory = nil
 }
 
+func getAPIKey() string {
+	if k := os.Getenv("GROQ_API_KEY"); k != "" {
+		return k
+	}
+	envFile := os.Getenv("HOME") + "/.config/gymnott_ai.env"
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "GROQ_API_KEY=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "GROQ_API_KEY="))
+		}
+	}
+	return ""
+}
+
 func askAI(query string, withScreenshot, crop bool) string {
-	apiKey := os.Getenv("GROQ_API_KEY")
+	apiKey := getAPIKey()
 	if apiKey == "" {
 		return "Error: GROQ_API_KEY environment variable not set."
 	}

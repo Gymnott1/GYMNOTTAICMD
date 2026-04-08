@@ -155,6 +155,10 @@ systemctl --user disable gymnott_ai   # remove from autostart
 journalctl --user -u gymnott_ai -f    # live logs
 ```
 
+```bash
+systemctl --user restart gymnott_ai #after changing key
+```
+
 > The service starts automatically on every login and restarts itself if it crashes.
 
 ---
