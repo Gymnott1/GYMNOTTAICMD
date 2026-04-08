@@ -99,6 +99,34 @@ rm ~/.config/autostart/gymnott_ai.desktop
 
 ---
 
+## 💾 Portable USB Install
+
+Copy Gymnott AI to a USB drive and install it on any Linux machine — even offline.
+
+### On this machine (bundle to USB)
+
+```bash
+./bundle_usb.sh
+```
+
+This copies all source files, your API key, and the Go tarball to the USB so the target machine needs zero internet access.
+
+### On the new machine
+
+```bash
+cd /media/usb/gymnott_ai
+chmod +x install.sh && ./install.sh
+```
+
+The installer will:
+- Auto-detect the OS (Ubuntu / Mint / Debian / Fedora / Arch / openSUSE)
+- Install all system dependencies for that distro
+- Use the bundled Go tarball (no download needed)
+- Read the API key from the USB automatically — no prompts
+- Build the binary, install the systemd service, and set up autostart
+
+---
+
 ## 🔧 Run as a Background System Service
 
 For a more robust setup — auto-restart on crash, runs silently in the background, survives reboots — use a **systemd user service**.
