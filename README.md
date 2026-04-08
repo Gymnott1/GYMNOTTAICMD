@@ -99,6 +99,66 @@ rm ~/.config/autostart/gymnott_ai.desktop
 
 ---
 
+## 🔧 Run as a Background System Service
+
+For a more robust setup — auto-restart on crash, runs silently in the background, survives reboots — use a **systemd user service**.
+
+### 1. Save your API key
+
+```bash
+echo 'GROQ_API_KEY=gsk_your_key_here' > ~/.config/gymnott_ai.env
+chmod 600 ~/.config/gymnott_ai.env
+```
+
+### 2. Create the service file
+
+```bash
+mkdir -p ~/.config/systemd/user
+```
+
+Create `~/.config/systemd/user/gymnott_ai.service`:
+
+```ini
+[Unit]
+Description=Gymnott AI Desktop Assistant
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/gymnott_ai.env
+ExecStart=/path/to/gymnott_ai
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+Replace `/path/to/gymnott_ai` with the full path to your binary, e.g. `/home/youruser/GYMNOTTAICMD/gymnott_ai`.
+
+### 3. Enable and start
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable gymnott_ai.service
+systemctl --user start gymnott_ai.service
+```
+
+### 4. Manage
+
+```bash
+systemctl --user status gymnott_ai    # check if running
+systemctl --user restart gymnott_ai   # restart (e.g. after rebuild)
+systemctl --user stop gymnott_ai      # stop
+systemctl --user disable gymnott_ai   # remove from autostart
+journalctl --user -u gymnott_ai -f    # live logs
+```
+
+> The service starts automatically on every login and restarts itself if it crashes.
+
+---
+
 ## ⌨️ Usage
 
 | Hotkey | Action |
