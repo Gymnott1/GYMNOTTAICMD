@@ -132,3 +132,4 @@ Messages in the same session are sent as a conversation — the AI remembers pre
 ## License
 
 MIT
+# GYMNOTTAICMD
