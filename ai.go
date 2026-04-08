@@ -57,12 +57,12 @@ func takeScreenshot(crop bool) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-const systemPrompt = `You are a helpful technical assistant. Be concise and avoid repetition.
-- If the answer involves commands or config, include them in full — no truncation
-- Keep explanations brief and relevant
-- Skip filler phrases like "here are some steps" or restating the question
-- Do not include example commands or placeholder commands — only real, complete, runnable commands
-- Do not pad responses with obvious information or generic advice`
+const systemPrompt = `You are a senior technical assistant. Give clear, practical answers.
+- When steps are needed, number them and be specific about what to do and where
+- Include the exact commands inline with the steps, not separately
+- Skip obvious filler like "open a terminal", "make sure you have X installed", or restating the question
+- Do not add generic warnings or notes unless something will actually break without them
+- Keep each step to one sentence + command, no padding`
 
 // chatHistory holds the conversation turns for multi-turn context.
 // Each entry is a map ready to be serialised into the messages array.
@@ -241,44 +241,38 @@ func renderMarkdown(buf *gtk.TextBuffer, t mdTags, responseView *gtk.TextView, t
 	inCode := false
 	codeLines := []string{}
 
-	flushCode := func() {
-		code := strings.Join(codeLines, "\n")
-		codeLines = codeLines[:0]
-		inCode = false
-
-		// Insert code block text
-		insTag(code+"\n", t.codeBlock)
-
-		// Insert a real GTK copy button as a child anchor
+	insertCopyBtn := func(code string) {
 		anchor, _ := buf.CreateChildAnchor(iter)
-		btn, _ := gtk.ButtonNewWithLabel("  📋 Copy  ")
+		btn, _ := gtk.ButtonNewWithLabel(" 📋 ")
 		btn.SetRelief(gtk.RELIEF_NONE)
-
-		// Style the button
-		btnStyle, _ := btn.GetStyleContext()
-		btnStyle.AddClass("copy-btn")
-
-		codeCopy := code // capture for closure
+		codeCopy := code
 		btn.Connect("clicked", func() {
 			clip, _ := gtk.ClipboardGet(gdk.SELECTION_CLIPBOARD)
 			clip.SetText(codeCopy)
-			btn.SetLabel("  ✓ Copied  ")
-			// Reset label after 1.5s
+			btn.SetLabel(" ✓ ")
 			go func() {
 				time.Sleep(1500 * time.Millisecond)
-				scheduleOnMain(func() { btn.SetLabel("  📋 Copy  ") })
+				scheduleOnMain(func() { btn.SetLabel(" 📋 ") })
 			}()
 		})
 		btn.ShowAll()
 		responseView.AddChildAtAnchor(btn, anchor)
+	}
+
+	flushCode := func() {
+		code := strings.Join(codeLines, "\n")
+		codeLines = codeLines[:0]
+		inCode = false
+		insTag(code+"\n", t.codeBlock)
+		insertCopyBtn(code)
 		ins("\n")
 	}
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// ── fenced code block (handles indented fences + `bash style) ──
-		if strings.HasPrefix(trimmed, "```") || (strings.HasPrefix(trimmed, "`") && !strings.HasPrefix(trimmed, "``") && len(trimmed) > 1) {
+		// ── fenced code block: only ``` triggers a fence, not single backticks ──
+		if strings.HasPrefix(trimmed, "```") {
 			if inCode {
 				flushCode()
 			} else {
@@ -309,8 +303,7 @@ func renderMarkdown(buf *gtk.TextBuffer, t mdTags, responseView *gtk.TextView, t
 		// ── bullet list ──
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			ins("  • ")
-			content := trimmed[2:]
-			renderInlineSpans(buf, iter, content, t)
+			renderInlineSpans(buf, iter, trimmed[2:], t, responseView, insertCopyBtn)
 			ins("\n")
 			continue
 		}
@@ -319,7 +312,7 @@ func renderMarkdown(buf *gtk.TextBuffer, t mdTags, responseView *gtk.TextView, t
 		if len(trimmed) > 2 && trimmed[0] >= '1' && trimmed[0] <= '9' && trimmed[1] == '.' {
 			dot := strings.Index(trimmed, ".")
 			ins("  " + trimmed[:dot+1] + " ")
-			renderInlineSpans(buf, iter, strings.TrimSpace(trimmed[dot+1:]), t)
+			renderInlineSpans(buf, iter, strings.TrimSpace(trimmed[dot+1:]), t, responseView, insertCopyBtn)
 			ins("\n")
 			continue
 		}
@@ -331,7 +324,7 @@ func renderMarkdown(buf *gtk.TextBuffer, t mdTags, responseView *gtk.TextView, t
 		}
 
 		// ── normal paragraph line ──
-		renderInlineSpans(buf, iter, trimmed, t)
+		renderInlineSpans(buf, iter, trimmed, t, responseView, insertCopyBtn)
 		ins("\n")
 	}
 
@@ -341,12 +334,11 @@ func renderMarkdown(buf *gtk.TextBuffer, t mdTags, responseView *gtk.TextView, t
 	}
 }
 
-func renderInlineSpans(buf *gtk.TextBuffer, iter *gtk.TextIter, line string, t mdTags) {
+func renderInlineSpans(buf *gtk.TextBuffer, iter *gtk.TextIter, line string, t mdTags, responseView *gtk.TextView, insertCopyBtn func(string)) {
 	type span struct {
 		marker string
 		tag    *gtk.TextTag
 	}
-	// order matters: check ** before *
 	spans := []span{{"**", t.bold}, {"*", t.italic}, {"`", t.code}}
 
 	ins := func(s string) { buf.Insert(iter, s) }
@@ -375,6 +367,10 @@ func renderInlineSpans(buf *gtk.TextBuffer, iter *gtk.TextIter, line string, t m
 			break
 		}
 		insTag(rest[:end], bestTag)
+		// insert copy button after inline code spans (only if looks like a command)
+		if best == "`" && (strings.Contains(rest[:end], " ") || len(rest[:end]) > 8) {
+			insertCopyBtn(rest[:end])
+		}
 		rest = rest[end+len(best):]
 	}
 }
