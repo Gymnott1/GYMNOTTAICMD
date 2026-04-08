@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	followerSize   = 20 // slightly bigger so spinner is visible
-	followerOffset = 14
+	followerSize   = 14
+	followerOffset = 10
 )
 
 // waiting is set to 1 while AI is processing, 0 otherwise
@@ -99,29 +99,25 @@ func startFollower() {
 				cr.Arc(tipX, tipY, 2, 0, 2*math.Pi)
 				cr.Fill()
 			} else {
-				// Normal red arrow
-				cr.SetSourceRGBA(1, 0.2, 0.2, 0.9)
-				cr.MoveTo(0, 0)
-				cr.LineTo(0, followerSize)
-				cr.LineTo(followerSize*0.35, followerSize*0.65)
-				cr.LineTo(followerSize*0.5, followerSize)
-				cr.LineTo(followerSize*0.65, followerSize*0.9)
-				cr.LineTo(followerSize*0.45, followerSize*0.6)
-				cr.LineTo(followerSize, followerSize*0.6)
-				cr.ClosePath()
+				// Red dot
+				cx := followerSize / 2.0
+				cy := followerSize / 2.0
+				r := followerSize/2.0 - 1.5
+
+				// Soft shadow
+				cr.SetSourceRGBA(0, 0, 0, 0.25)
+				cr.Arc(cx+1, cy+1, r, 0, 2*math.Pi)
 				cr.Fill()
 
-				cr.SetSourceRGBA(1, 1, 1, 0.8)
-				cr.SetLineWidth(0.8)
-				cr.MoveTo(0, 0)
-				cr.LineTo(0, followerSize)
-				cr.LineTo(followerSize*0.35, followerSize*0.65)
-				cr.LineTo(followerSize*0.5, followerSize)
-				cr.LineTo(followerSize*0.65, followerSize*0.9)
-				cr.LineTo(followerSize*0.45, followerSize*0.6)
-				cr.LineTo(followerSize, followerSize*0.6)
-				cr.ClosePath()
-				cr.Stroke()
+				// Red fill
+				cr.SetSourceRGBA(0.95, 0.15, 0.15, 0.92)
+				cr.Arc(cx, cy, r, 0, 2*math.Pi)
+				cr.Fill()
+
+				// White highlight
+				cr.SetSourceRGBA(1, 1, 1, 0.35)
+				cr.Arc(cx-r*0.25, cy-r*0.25, r*0.4, 0, 2*math.Pi)
+				cr.Fill()
 			}
 		})
 
