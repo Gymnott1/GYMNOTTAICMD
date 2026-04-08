@@ -79,6 +79,18 @@ echo 'export GROQ_API_KEY=gsk_your_key_here' >> ~/.bashrc
 source ~/.bashrc
 ```
 
+### Change or clear the API key
+
+```bash
+# Change key
+echo 'GROQ_API_KEY=gsk_your_new_key' > ~/.config/gymnott_ai.env
+systemctl --user restart gymnott_ai
+
+# Remove key
+rm ~/.config/gymnott_ai.env
+systemctl --user stop gymnott_ai
+```
+
 ---
 
 ## 🚀 Auto-start on Login
