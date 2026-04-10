@@ -21,6 +21,7 @@ import "C"
 
 import (
 	"math"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -39,7 +40,20 @@ var waiting int32
 // tooltipWin is the floating tooltip that shows AI response near the cursor
 var tooltipWin *gtk.Window
 var tooltipLabel *gtk.Label
+var tooltipText string
 var tooltipTimeoutSecs = 30
+
+func pasteTooltipText() {
+	if tooltipText == "" {
+		return
+	}
+	hideFollowerTooltip()
+	text := tooltipText
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		exec.Command("xdotool", "type", "--clearmodifiers", "--", text).Run()
+	}()
+}
 
 func showFollowerTooltip(text string) {
 	scheduleOnMain(func() {
@@ -76,11 +90,21 @@ func showFollowerTooltip(text string) {
 			lbl.SetSelectable(true)
 			lbl.SetMaxWidthChars(55)
 			box.PackStart(lbl, true, true, 0)
+
+			hintLbl, _ := gtk.LabelNew("Tab to paste · Esc to dismiss")
+			hintLbl.SetXAlign(1)
+			hintCss, _ := gtk.CssProviderNew()
+			hintCss.LoadFromData(`label { color: #555577; font-size: 10px; }`)
+			hintCtx, _ := hintLbl.GetStyleContext()
+			hintCtx.AddProvider(hintCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+			box.PackEnd(hintLbl, false, false, 0)
+
 			win.Add(box)
 
 			tooltipLabel = lbl
 			tooltipWin = win
 		}
+		tooltipText = text
 		tooltipLabel.SetText(text)
 		x, y := getMousePos()
 		tooltipWin.Move(x+followerOffset+followerSize+2, y+followerOffset)
