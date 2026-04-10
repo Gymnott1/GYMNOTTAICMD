@@ -206,6 +206,21 @@ func showOverlay() {
 	tooltipCtx, _ := tooltipModeCheck.GetStyleContext()
 	tooltipCtx.AddProvider(tooltipCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+	// Timeout spin button (seconds)
+	tooltipTimeoutSpin, _ := gtk.SpinButtonNewWithRange(5, 300, 5)
+	tooltipTimeoutSpin.SetValue(float64(tooltipTimeoutSecs))
+	tooltipTimeoutSpin.SetTooltipText("Tooltip auto-hide (seconds)")
+	tooltipTimeoutSpin.SetSizeRequest(60, -1)
+	tooltipTimeoutSpin.Connect("value-changed", func() {
+		tooltipTimeoutSecs = tooltipTimeoutSpin.GetValueAsInt()
+	})
+	tooltipModeCheck.Connect("toggled", func() {
+		tooltipTimeoutSpin.SetSensitive(tooltipModeCheck.GetActive())
+	})
+	tooltipTimeoutSpin.SetSensitive(false)
+
+	secsLbl, _ := gtk.LabelNew("s")
+
 	sendBtn, _ := gtk.ButtonNewWithLabel("Ask ↵")
 	sendBtnCss, _ := gtk.CssProviderNew()
 	sendBtnCss.LoadFromData(`button { padding: 5px 18px; font-size: 13px; }`)
@@ -215,6 +230,8 @@ func showOverlay() {
 	optionsBar.PackStart(screenshotCheck, false, false, 0)
 	optionsBar.PackStart(cropCheck, false, false, 0)
 	optionsBar.PackStart(tooltipModeCheck, false, false, 0)
+	optionsBar.PackStart(tooltipTimeoutSpin, false, false, 0)
+	optionsBar.PackStart(secsLbl, false, false, 0)
 	optionsBar.PackEnd(sendBtn, false, false, 0)
 
 	// ── Status label ──

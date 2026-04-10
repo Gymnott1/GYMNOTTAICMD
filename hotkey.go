@@ -59,7 +59,7 @@ func listenHotkey() {
 				withShot, crop := getScreenshotPrefs()
 				setWaiting(true)
 				go func() {
-					response := askAI("What's on my screen? Give a brief helpful summary or answer.", withShot, crop)
+					response := askAI("Look at my screen. Give only the exact commands or fixes needed — no explanations, no intros. If there's an error, give the fix. If there's code, give the correction. Be terse.", withShot, crop)
 					scheduleOnMain(func() {
 						setWaiting(false)
 						showFollowerTooltip(response)

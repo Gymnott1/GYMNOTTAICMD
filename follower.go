@@ -39,6 +39,7 @@ var waiting int32
 // tooltipWin is the floating tooltip that shows AI response near the cursor
 var tooltipWin *gtk.Window
 var tooltipLabel *gtk.Label
+var tooltipTimeoutSecs = 30
 
 func showFollowerTooltip(text string) {
 	scheduleOnMain(func() {
@@ -48,6 +49,7 @@ func showFollowerTooltip(text string) {
 			win.SetKeepAbove(true)
 			win.SetSkipTaskbarHint(true)
 			win.SetDefaultSize(400, -1)
+			win.SetAppPaintable(true)
 
 			screen := win.GetScreen()
 			visual, _ := screen.GetRGBAVisual()
@@ -55,16 +57,24 @@ func showFollowerTooltip(text string) {
 				win.SetVisual(visual)
 			}
 
+			css, _ := gtk.CssProviderNew()
+			css.LoadFromData(`
+				window { background-color: #1e1e2e; border-radius: 8px; border: 1px solid #3a3a5a; }
+				label { color: #e0e0f0; font-size: 12px; }
+			`)
+			gtk.AddProviderForScreen(screen, css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
 			box, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-			box.SetMarginTop(8)
-			box.SetMarginBottom(8)
-			box.SetMarginStart(10)
-			box.SetMarginEnd(10)
+			box.SetMarginTop(10)
+			box.SetMarginBottom(10)
+			box.SetMarginStart(12)
+			box.SetMarginEnd(12)
 
 			lbl, _ := gtk.LabelNew("")
 			lbl.SetLineWrap(true)
 			lbl.SetXAlign(0)
 			lbl.SetSelectable(true)
+			lbl.SetMaxWidthChars(55)
 			box.PackStart(lbl, true, true, 0)
 			win.Add(box)
 
@@ -73,8 +83,15 @@ func showFollowerTooltip(text string) {
 		}
 		tooltipLabel.SetText(text)
 		x, y := getMousePos()
-		tooltipWin.Move(x+20, y+20)
+		tooltipWin.Move(x+followerOffset+followerSize+2, y+followerOffset)
 		tooltipWin.ShowAll()
+
+		// auto-hide after timeout
+		secs := tooltipTimeoutSecs
+		go func() {
+			time.Sleep(time.Duration(secs) * time.Second)
+			hideFollowerTooltip()
+		}()
 	})
 }
 
@@ -195,7 +212,7 @@ func startFollower() {
 		scheduleOnMain(func() {
 			win.Move(x+followerOffset, y+followerOffset)
 			if tooltipWin != nil && tooltipWin.IsVisible() {
-				tooltipWin.Move(x+20, y+20)
+				tooltipWin.Move(x+followerOffset+followerSize+2, y+followerOffset)
 			}
 			if da != nil {
 				da.QueueDraw()
