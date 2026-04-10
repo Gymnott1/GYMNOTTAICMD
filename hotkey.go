@@ -82,7 +82,7 @@ func listenHotkey() {
 				setWaiting(true)
 				go func() {
 					time.Sleep(150 * time.Millisecond)
-					response := askAI("Look at my screen. Give only the exact commands or complete code fixes needed — no explanations, no intros. Write every command in full, never truncate.", withShot, crop)
+					response := askAI("Look at my screen and give me only the exact commands needed to fix or complete what's shown, in order, ready to paste into a terminal.", withShot, crop)
 					scheduleOnMain(func() {
 						setWaiting(false)
 						showFollowerTooltip(response)

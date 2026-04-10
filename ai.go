@@ -58,12 +58,15 @@ func takeScreenshot(crop bool) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-const systemPrompt = `You are a senior technical assistant. Give clear, practical answers.
-- When steps are needed, number them and be specific about what to do and where
-- Include the exact commands inline with the steps, not separately
-- Skip obvious filler like "open a terminal", "make sure you have X installed", or restating the question
-- Do not add generic warnings or notes unless something will actually break without them
-- Keep each step to one sentence + command, no padding`
+const systemPrompt = `You are a senior technical assistant helping a user who will paste your response directly into a terminal and run it.
+Rules:
+- Output ONLY the exact commands in order, nothing else
+- No numbering, no bullet points, no headings, no explanations, no markdown
+- No comments unless a command needs a placeholder the user must fill in (use # to mark it)
+- Every command must be complete and runnable as-is
+- If a setup has 20 commands, write all 20
+- Never truncate, summarise, or skip steps
+- Assume a Linux terminal unless the question implies otherwise (e.g. MikroTik = RouterOS CLI)`
 
 // chatHistory holds the conversation turns for multi-turn context.
 // Each entry is a map ready to be serialised into the messages array.
@@ -130,7 +133,7 @@ func askAI(query string, withScreenshot, crop bool) string {
 	payload := map[string]any{
 		"model":                 model,
 		"messages":              messages,
-		"max_completion_tokens": 1024,
+		"max_completion_tokens": 4096,
 		"temperature":           0.7,
 		"stream":                false,
 	}
