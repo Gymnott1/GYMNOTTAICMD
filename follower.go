@@ -22,6 +22,7 @@ import "C"
 import (
 	"math"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -51,7 +52,14 @@ func pasteTooltipText() {
 	text := tooltipText
 	go func() {
 		time.Sleep(150 * time.Millisecond)
-		exec.Command("xdotool", "type", "--clearmodifiers", "--", text).Run()
+		for _, line := range strings.Split(text, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			exec.Command("xdotool", "type", "--clearmodifiers", "--", line).Run()
+			exec.Command("xdotool", "key", "Return").Run()
+		}
 	}()
 }
 

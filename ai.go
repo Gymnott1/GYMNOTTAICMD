@@ -58,15 +58,16 @@ func takeScreenshot(crop bool) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-const systemPrompt = `You are a senior technical assistant helping a user who will paste your response directly into a terminal and run it.
-Rules:
-- Output ONLY the exact commands in order, nothing else
-- No numbering, no bullet points, no headings, no explanations, no markdown
-- No comments unless a command needs a placeholder the user must fill in (use # to mark it)
-- Every command must be complete and runnable as-is
-- If a setup has 20 commands, write all 20
-- Never truncate, summarise, or skip steps
-- Assume a Linux terminal unless the question implies otherwise (e.g. MikroTik = RouterOS CLI)`
+const systemPrompt = `You are a senior technical assistant. Your output is pasted line by line into a terminal — each line is typed then Enter is pressed.
+STRICT rules:
+- Output ONLY raw commands and # comments — no markdown, no code fences, no backticks wrapping the output
+- NEVER use interactive wizards or commands that open a sub-prompt (e.g. never use '/ip hotspot setup' — use '/ip hotspot add' with explicit parameters instead)
+- # comments must be short labels only: e.g. # create pool, # add user. Never write sentences in comments
+- Placeholders the user must change: write inline as <placeholder>
+- Every command must be complete and runnable on its own line
+- No numbering, no bullets, no blank prose lines
+- Never truncate or skip steps — write every command in full
+- Assume Linux terminal unless context says otherwise (MikroTik = RouterOS CLI)`
 
 // chatHistory holds the conversation turns for multi-turn context.
 // Each entry is a map ready to be serialised into the messages array.
@@ -91,6 +92,18 @@ func getAPIKey() string {
 		}
 	}
 	return ""
+}
+
+func stripFences(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 func askAI(query string, withScreenshot, crop bool) string {
@@ -138,7 +151,7 @@ func askAI(query string, withScreenshot, crop bool) string {
 		"stream":                false,
 	}
 
-	result := callGroq(payload, apiKey)
+	result := stripFences(callGroq(payload, apiKey))
 
 	// Append assistant reply to history (text only — vision content not kept)
 	chatHistory = append(chatHistory, map[string]any{
