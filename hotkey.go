@@ -11,15 +11,17 @@ package main
 
 typedef struct { int type; } XAnyEvent_t;
 
-// Returns 1 when Ctrl+Space is pressed
+// Returns 1 when Ctrl+Space is pressed, 2 when Escape is pressed
 int wait_for_hotkey() {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return 0;
 
     Window root = DefaultRootWindow(dpy);
     KeyCode space = XKeysymToKeycode(dpy, XK_space);
+    KeyCode esc   = XKeysymToKeycode(dpy, XK_Escape);
 
     XGrabKey(dpy, space, ControlMask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, esc,   AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
     XSelectInput(dpy, root, KeyPressMask);
 
     XEvent ev;
@@ -29,8 +31,15 @@ int wait_for_hotkey() {
             XKeyEvent *ke = (XKeyEvent*)&ev;
             if (ke->keycode == space && (ke->state & ControlMask)) {
                 XUngrabKey(dpy, space, ControlMask, root);
+                XUngrabKey(dpy, esc,   AnyModifier, root);
                 XCloseDisplay(dpy);
                 return 1;
+            }
+            if (ke->keycode == esc) {
+                XUngrabKey(dpy, space, ControlMask, root);
+                XUngrabKey(dpy, esc,   AnyModifier, root);
+                XCloseDisplay(dpy);
+                return 2;
             }
         }
     }
@@ -40,7 +49,25 @@ import "C"
 
 func listenHotkey() {
 	for {
-		C.wait_for_hotkey()
-		scheduleOnMain(showOverlay)
+		ev := int(C.wait_for_hotkey())
+		if ev == 2 {
+			scheduleOnMain(hideFollowerTooltip)
+			continue
+		}
+		scheduleOnMain(func() {
+			if getTooltipMode() {
+				withShot, crop := getScreenshotPrefs()
+				setWaiting(true)
+				go func() {
+					response := askAI("What's on my screen? Give a brief helpful summary or answer.", withShot, crop)
+					scheduleOnMain(func() {
+						setWaiting(false)
+						showFollowerTooltip(response)
+					})
+				}()
+			} else {
+				showOverlay()
+			}
+		})
 	}
 }

@@ -36,6 +36,56 @@ const (
 // waiting is set to 1 while AI is processing, 0 otherwise
 var waiting int32
 
+// tooltipWin is the floating tooltip that shows AI response near the cursor
+var tooltipWin *gtk.Window
+var tooltipLabel *gtk.Label
+
+func showFollowerTooltip(text string) {
+	scheduleOnMain(func() {
+		if tooltipWin == nil {
+			win, _ := gtk.WindowNew(gtk.WINDOW_POPUP)
+			win.SetDecorated(false)
+			win.SetKeepAbove(true)
+			win.SetSkipTaskbarHint(true)
+			win.SetDefaultSize(400, -1)
+
+			screen := win.GetScreen()
+			visual, _ := screen.GetRGBAVisual()
+			if visual != nil {
+				win.SetVisual(visual)
+			}
+
+			box, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+			box.SetMarginTop(8)
+			box.SetMarginBottom(8)
+			box.SetMarginStart(10)
+			box.SetMarginEnd(10)
+
+			lbl, _ := gtk.LabelNew("")
+			lbl.SetLineWrap(true)
+			lbl.SetXAlign(0)
+			lbl.SetSelectable(true)
+			box.PackStart(lbl, true, true, 0)
+			win.Add(box)
+
+			tooltipLabel = lbl
+			tooltipWin = win
+		}
+		tooltipLabel.SetText(text)
+		x, y := getMousePos()
+		tooltipWin.Move(x+20, y+20)
+		tooltipWin.ShowAll()
+	})
+}
+
+func hideFollowerTooltip() {
+	scheduleOnMain(func() {
+		if tooltipWin != nil {
+			tooltipWin.Hide()
+		}
+	})
+}
+
 func setWaiting(v bool) {
 	if v {
 		atomic.StoreInt32(&waiting, 1)
@@ -144,6 +194,9 @@ func startFollower() {
 		x, y := getMousePos()
 		scheduleOnMain(func() {
 			win.Move(x+followerOffset, y+followerOffset)
+			if tooltipWin != nil && tooltipWin.IsVisible() {
+				tooltipWin.Move(x+20, y+20)
+			}
 			if da != nil {
 				da.QueueDraw()
 			}
