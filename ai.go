@@ -16,6 +16,7 @@ import (
 	"github.com/gotk3/gotk3/pango"
 )
 
+// new
 const (
 	groqModel     = "meta-llama/llama-4-scout-17b-16e-instruct"
 	groqTextModel = "llama-3.3-70b-versatile"
@@ -205,10 +206,10 @@ func makeTags(buf *gtk.TextBuffer) mdTags {
 		return t
 	}
 	return mdTags{
-		h1:   mk("h1", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_X_LARGE}),
-		h2:   mk("h2", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_LARGE}),
-		h3:   mk("h3", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_MEDIUM}),
-		bold: mk("bold", map[string]any{"weight": pango.WEIGHT_BOLD}),
+		h1:     mk("h1", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_X_LARGE}),
+		h2:     mk("h2", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_LARGE}),
+		h3:     mk("h3", map[string]any{"weight": pango.WEIGHT_BOLD, "scale": pango.SCALE_MEDIUM}),
+		bold:   mk("bold", map[string]any{"weight": pango.WEIGHT_BOLD}),
 		italic: mk("italic", map[string]any{"style": pango.STYLE_ITALIC}),
 		code: mk("code", map[string]any{
 			"family": "monospace", "background": "#2d2d2d", "foreground": "#f8f8f2",
