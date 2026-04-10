@@ -11,15 +11,19 @@ package main
 
 typedef struct { int type; } XAnyEvent_t;
 
-// Returns 1 when Ctrl+Space is pressed
+// Returns 1 when Ctrl+Space is pressed, 2 when Escape is pressed, 3 when Tab is pressed
 int wait_for_hotkey() {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return 0;
 
     Window root = DefaultRootWindow(dpy);
     KeyCode space = XKeysymToKeycode(dpy, XK_space);
+    KeyCode esc   = XKeysymToKeycode(dpy, XK_Escape);
+    KeyCode tab   = XKeysymToKeycode(dpy, XK_Tab);
 
     XGrabKey(dpy, space, ControlMask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, esc,   AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(dpy, tab,   AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
     XSelectInput(dpy, root, KeyPressMask);
 
     XEvent ev;
@@ -29,8 +33,24 @@ int wait_for_hotkey() {
             XKeyEvent *ke = (XKeyEvent*)&ev;
             if (ke->keycode == space && (ke->state & ControlMask)) {
                 XUngrabKey(dpy, space, ControlMask, root);
+                XUngrabKey(dpy, esc,   AnyModifier, root);
+                XUngrabKey(dpy, tab,   AnyModifier, root);
                 XCloseDisplay(dpy);
                 return 1;
+            }
+            if (ke->keycode == esc) {
+                XUngrabKey(dpy, space, ControlMask, root);
+                XUngrabKey(dpy, esc,   AnyModifier, root);
+                XUngrabKey(dpy, tab,   AnyModifier, root);
+                XCloseDisplay(dpy);
+                return 2;
+            }
+            if (ke->keycode == tab) {
+                XUngrabKey(dpy, space, ControlMask, root);
+                XUngrabKey(dpy, esc,   AnyModifier, root);
+                XUngrabKey(dpy, tab,   AnyModifier, root);
+                XCloseDisplay(dpy);
+                return 3;
             }
         }
     }
@@ -38,9 +58,39 @@ int wait_for_hotkey() {
 */
 import "C"
 
+import "time"
+
 func listenHotkey() {
 	for {
-		C.wait_for_hotkey()
-		scheduleOnMain(showOverlay)
+		ev := int(C.wait_for_hotkey())
+		if ev == 2 {
+			scheduleOnMain(hideFollowerTooltip)
+			continue
+		}
+		if ev == 3 {
+			pasteTooltipText()
+			continue
+		}
+		scheduleOnMain(func() {
+			if getTooltipMode() {
+				withShot, crop := getScreenshotPrefs()
+				if !withShot {
+					// no screenshot configured — need a query, open overlay
+					showOverlay()
+					return
+				}
+				setWaiting(true)
+				go func() {
+					time.Sleep(150 * time.Millisecond)
+					response := askAI("Look at my screen and give me only the exact commands needed to fix or complete what's shown, in order, ready to paste into a terminal.", withShot, crop)
+					scheduleOnMain(func() {
+						setWaiting(false)
+						showFollowerTooltip(response)
+					})
+				}()
+			} else {
+				showOverlay()
+			}
+		})
 	}
 }

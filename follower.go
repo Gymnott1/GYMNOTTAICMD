@@ -21,6 +21,8 @@ import "C"
 
 import (
 	"math"
+	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +37,128 @@ const (
 
 // waiting is set to 1 while AI is processing, 0 otherwise
 var waiting int32
+
+// tooltipWin is the floating tooltip that shows AI response near the cursor
+var tooltipWin *gtk.Window
+var tooltipLabel *gtk.Label
+var tooltipText string
+var tooltipTimeoutSecs = 30
+
+func pasteTooltipText() {
+	if tooltipText == "" {
+		return
+	}
+	hideFollowerTooltip()
+	text := tooltipText
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		for _, line := range strings.Split(text, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			exec.Command("xdotool", "type", "--clearmodifiers", "--", line).Run()
+			exec.Command("xdotool", "key", "Return").Run()
+		}
+	}()
+}
+
+func showFollowerTooltip(text string) {
+	scheduleOnMain(func() {
+		if tooltipWin == nil {
+			win, _ := gtk.WindowNew(gtk.WINDOW_POPUP)
+			win.SetDecorated(false)
+			win.SetKeepAbove(true)
+			win.SetSkipTaskbarHint(true)
+			win.SetAppPaintable(true)
+			win.SetResizable(false)
+
+			screen := win.GetScreen()
+			visual, _ := screen.GetRGBAVisual()
+			if visual != nil {
+				win.SetVisual(visual)
+			}
+
+			css, _ := gtk.CssProviderNew()
+			css.LoadFromData(`
+				window { background-color: #1e1e2e; border-radius: 8px; border: 1px solid #3a3a5a; }
+				label { color: #e0e0f0; font-size: 12px; font-family: monospace; }
+			`)
+			gtk.AddProviderForScreen(screen, css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+			box, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 4)
+			box.SetMarginTop(10)
+			box.SetMarginBottom(6)
+			box.SetMarginStart(12)
+			box.SetMarginEnd(12)
+
+			scroll, _ := gtk.ScrolledWindowNew(nil, nil)
+			scroll.SetPolicy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
+
+			lbl, _ := gtk.LabelNew("")
+			lbl.SetLineWrap(true)
+			lbl.SetLineWrapMode(2) // PANGO_WRAP_WORD_CHAR
+			lbl.SetXAlign(0)
+			lbl.SetSelectable(true)
+			scroll.Add(lbl)
+			box.PackStart(scroll, true, true, 0)
+
+			hintLbl, _ := gtk.LabelNew("Tab to paste · Esc to dismiss")
+			hintLbl.SetXAlign(1)
+			hintCss, _ := gtk.CssProviderNew()
+			hintCss.LoadFromData(`label { color: #555577; font-size: 10px; }`)
+			hintCtx, _ := hintLbl.GetStyleContext()
+			hintCtx.AddProvider(hintCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+			box.PackEnd(hintLbl, false, false, 0)
+
+			win.Add(box)
+			tooltipLabel = lbl
+			tooltipWin = win
+		}
+
+		tooltipText = text
+		tooltipLabel.SetText(text)
+
+		// size: width by longest line (capped 300–600), height by line count (capped 400)
+		lines := strings.Split(text, "\n")
+		maxLen := 0
+		for _, l := range lines {
+			if len(l) > maxLen {
+				maxLen = len(l)
+			}
+		}
+		w := maxLen*7 + 24 // ~7px per char + padding
+		if w < 300 {
+			w = 300
+		}
+		if w > 600 {
+			w = 600
+		}
+		h := len(lines)*18 + 36 // ~18px per line + hint + padding
+		if h > 400 {
+			h = 400
+		}
+		tooltipWin.Resize(w, h)
+
+		x, y := getMousePos()
+		tooltipWin.Move(x+followerOffset+followerSize+2, y+followerOffset)
+		tooltipWin.ShowAll()
+
+		secs := tooltipTimeoutSecs
+		go func() {
+			time.Sleep(time.Duration(secs) * time.Second)
+			hideFollowerTooltip()
+		}()
+	})
+}
+
+func hideFollowerTooltip() {
+	scheduleOnMain(func() {
+		if tooltipWin != nil {
+			tooltipWin.Hide()
+		}
+	})
+}
 
 func setWaiting(v bool) {
 	if v {
@@ -144,6 +268,9 @@ func startFollower() {
 		x, y := getMousePos()
 		scheduleOnMain(func() {
 			win.Move(x+followerOffset, y+followerOffset)
+			if tooltipWin != nil && tooltipWin.IsVisible() {
+				tooltipWin.Move(x+followerOffset+followerSize+2, y+followerOffset)
+			}
 			if da != nil {
 				da.QueueDraw()
 			}
