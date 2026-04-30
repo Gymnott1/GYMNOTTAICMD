@@ -73,13 +73,16 @@ export GROQ_API_KEY=gsk_your_key_here
 ./gymnott_ai
 ```
 
-For **Text Extract**, also set a Gemini key:
+For **Text Extract** (OCR via Gemini), also set a Gemini key — get a free one at [aistudio.google.com](https://aistudio.google.com/apikey):
 
 ```bash
 export GEMINI_API_KEY=your_gemini_key_here
+./gymnott_ai
 ```
 
-To make the key permanent:
+> **Text Extract** takes a screenshot, runs OCR with `tesseract`, then sends the extracted text to Gemini instead of sending the raw image. Useful when the vision model struggles with small or dense text (terminals, logs, code).
+
+To make the keys permanent:
 
 ```bash
 echo 'export GROQ_API_KEY=gsk_your_key_here' >> ~/.bashrc
@@ -227,6 +230,7 @@ systemctl --user restart gymnott_ai #after changing key
 |----------|-----------|
 | 📸 Send screenshot | Hides the overlay, captures the active window, sends it with your message |
 | ✂️ Crop | Drag-select a region instead of the full window (requires 📸 checked) |
+| 📝 Text Extract | OCR the screenshot with `tesseract`, send extracted text to **Gemini** (requires 📸 checked and `GEMINI_API_KEY` set) |
 
 ### Chat history
 
