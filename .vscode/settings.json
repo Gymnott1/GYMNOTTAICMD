@@ -1,0 +1,15 @@
+{
+  "go.toolsEnvVars": {
+    "GOCACHE": "${workspaceFolder}/.cache/go-build"
+  },
+  "gopls": {
+    "env": {
+      "GOCACHE": "${workspaceFolder}/.cache/go-build"
+    },
+    "directoryFilters": [
+      "-.git",
+      "-.cache"
+    ]
+  },
+  "go.testTimeout": "120s"
+}

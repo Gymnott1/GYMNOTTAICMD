@@ -20,9 +20,10 @@ import (
 const (
 	groqModel     = "meta-llama/llama-4-scout-17b-16e-instruct"
 	groqTextModel = "llama-3.3-70b-versatile"
+	geminiModel   = "gemini-flash-latest"
 )
 
-func takeScreenshot(crop bool) (string, error) {
+func takeScreenshotFile(crop bool) (string, error) {
 	path := fmt.Sprintf("/tmp/ai_screenshot_%d.png", time.Now().UnixMilli())
 
 	if crop {
@@ -50,6 +51,14 @@ func takeScreenshot(crop bool) (string, error) {
 		}
 	}
 
+	return path, nil
+}
+
+func takeScreenshot(crop bool) (string, error) {
+	path, err := takeScreenshotFile(crop)
+	if err != nil {
+		return "", err
+	}
 	data, err := os.ReadFile(path)
 	os.Remove(path)
 	if err != nil {
@@ -94,6 +103,23 @@ func getAPIKey() string {
 	return ""
 }
 
+func getGeminiAPIKey() string {
+	if k := os.Getenv("GEMINI_API_KEY"); k != "" {
+		return k
+	}
+	envFile := os.Getenv("HOME") + "/.config/gymnott_ai.env"
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "GEMINI_API_KEY=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "GEMINI_API_KEY="))
+		}
+	}
+	return ""
+}
+
 func stripFences(s string) string {
 	lines := strings.Split(s, "\n")
 	out := make([]string, 0, len(lines))
@@ -106,7 +132,11 @@ func stripFences(s string) string {
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
-func askAI(query string, withScreenshot, crop bool) string {
+func askAI(query string, withScreenshot, crop, textExtract bool) string {
+	if withScreenshot && textExtract {
+		return askGeminiWithExtractedText(query, crop)
+	}
+
 	apiKey := getAPIKey()
 	if apiKey == "" {
 		return "Error: GROQ_API_KEY environment variable not set."
@@ -162,6 +192,60 @@ func askAI(query string, withScreenshot, crop bool) string {
 	return result
 }
 
+func askGeminiWithExtractedText(query string, crop bool) string {
+	apiKey := getGeminiAPIKey()
+	if apiKey == "" {
+		return "Error: GEMINI_API_KEY environment variable not set."
+	}
+
+	imgPath, err := takeScreenshotFile(crop)
+	if err != nil {
+		return "Screenshot error: " + err.Error()
+	}
+	defer os.Remove(imgPath)
+
+	extractedText, err := extractTextFromImage(imgPath)
+	if err != nil {
+		return "Text extraction error: " + err.Error() + "\nInstall OCR support with: sudo apt install tesseract-ocr"
+	}
+	if strings.TrimSpace(extractedText) == "" {
+		extractedText = "(No text was detected in the captured image.)"
+	}
+
+	userPrompt := strings.TrimSpace(query)
+	if userPrompt == "" {
+		userPrompt = "Use the extracted screen text to help me."
+	}
+	prompt := systemPrompt +
+		"\n\nUser request:\n" + userPrompt +
+		"\n\nExtracted text from screenshot:\n" + extractedText
+
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{
+				"parts": []map[string]any{
+					{"text": prompt},
+				},
+			},
+		},
+	}
+
+	result := stripFences(callGemini(payload, apiKey))
+	chatHistory = append(chatHistory,
+		map[string]any{"role": "user", "content": prompt},
+		map[string]any{"role": "assistant", "content": result},
+	)
+	return result
+}
+
+func extractTextFromImage(path string) (string, error) {
+	out, err := exec.Command("tesseract", path, "stdout").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func callGroq(payload map[string]any, apiKey string) string {
 	body, _ := json.Marshal(payload)
 	tmpFile := fmt.Sprintf("/tmp/ai_req_%d.json", time.Now().UnixMilli())
@@ -177,6 +261,58 @@ func callGroq(payload map[string]any, apiKey string) string {
 		return "curl error: " + err.Error()
 	}
 	return parseGroqResponse(out)
+}
+
+func callGemini(payload map[string]any, apiKey string) string {
+	body, _ := json.Marshal(payload)
+	tmpFile := fmt.Sprintf("/tmp/ai_gemini_req_%d.json", time.Now().UnixMilli())
+	os.WriteFile(tmpFile, body, 0600)
+	defer os.Remove(tmpFile)
+	out, err := exec.Command("curl", "-s",
+		"https://generativelanguage.googleapis.com/v1beta/models/"+geminiModel+":generateContent",
+		"-H", "Content-Type: application/json",
+		"-H", "X-goog-api-key: "+apiKey,
+		"-X", "POST",
+		"-d", "@"+tmpFile,
+	).Output()
+	if err != nil {
+		return "curl error: " + err.Error()
+	}
+	return parseGeminiResponse(out)
+}
+
+func parseGeminiResponse(data []byte) string {
+	var resp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "Parse error: " + err.Error() + "\nRaw: " + string(data)
+	}
+	if resp.Error.Message != "" {
+		return "API Error: " + resp.Error.Message
+	}
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "No response from Gemini."
+	}
+	var parts []string
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+		}
+	}
+	if len(parts) == 0 {
+		return "No text response from Gemini."
+	}
+	return strings.Join(parts, "\n")
 }
 
 func parseGroqResponse(data []byte) string {

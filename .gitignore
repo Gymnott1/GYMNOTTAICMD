@@ -2,3 +2,4 @@ gymnott_ai
 *.png
 *.tar.gz
 /tmp/
+/.cache/

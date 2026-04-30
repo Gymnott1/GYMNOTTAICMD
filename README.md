@@ -40,7 +40,7 @@ The AI sees your screen and responds with commands, configs, and explanations �
 
 ```bash
 # 1. Install system dependencies
-sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop
+sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop tesseract-ocr
 
 # 2. Install Go (if not already installed)
 wget https://go.dev/dl/go1.22.4.linux-amd64.tar.gz
@@ -53,6 +53,7 @@ git clone https://github.com/Gymnott1/GYMNOTTAICMD.git
 cd GYMNOTTAICMD
 go mod tidy
 go build -o gymnott_ai .
+./gymnott_ai
 ```
 
 Or use the one-command install script:
@@ -72,10 +73,20 @@ export GROQ_API_KEY=gsk_your_key_here
 ./gymnott_ai
 ```
 
-To make the key permanent:
+For **Text Extract** (OCR via Gemini), also set a Gemini key — get a free one at [aistudio.google.com](https://aistudio.google.com/apikey):
+
+```bash
+export GEMINI_API_KEY=your_gemini_key_here
+./gymnott_ai
+```
+
+> **Text Extract** takes a screenshot, runs OCR with `tesseract`, then sends the extracted text to Gemini instead of sending the raw image. Useful when the vision model struggles with small or dense text (terminals, logs, code).
+
+To make the keys permanent:
 
 ```bash
 echo 'export GROQ_API_KEY=gsk_your_key_here' >> ~/.bashrc
+echo 'export GEMINI_API_KEY=your_gemini_key_here' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -83,7 +94,7 @@ source ~/.bashrc
 
 ```bash
 # Change key
-echo 'GROQ_API_KEY=gsk_your_new_key' > ~/.config/gymnott_ai.env
+printf 'GROQ_API_KEY=gsk_your_new_key\nGEMINI_API_KEY=your_gemini_key_here\n' > ~/.config/gymnott_ai.env
 systemctl --user restart gymnott_ai
 
 # Remove key
@@ -147,6 +158,7 @@ For a more robust setup — auto-restart on crash, runs silently in the backgrou
 
 ```bash
 echo 'GROQ_API_KEY=gsk_your_key_here' > ~/.config/gymnott_ai.env
+echo 'GEMINI_API_KEY=your_gemini_key_here' >> ~/.config/gymnott_ai.env
 chmod 600 ~/.config/gymnott_ai.env
 ```
 
@@ -218,6 +230,7 @@ systemctl --user restart gymnott_ai #after changing key
 |----------|-----------|
 | 📸 Send screenshot | Hides the overlay, captures the active window, sends it with your message |
 | ✂️ Crop | Drag-select a region instead of the full window (requires 📸 checked) |
+| 📝 Text Extract | OCR the screenshot with `tesseract`, send extracted text to **Gemini** (requires 📸 checked and `GEMINI_API_KEY` set) |
 
 ### Chat history
 

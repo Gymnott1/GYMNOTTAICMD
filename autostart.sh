@@ -25,6 +25,15 @@ else
     echo "✅ API key already saved at $ENV_FILE"
 fi
 
+if ! grep -q '^GEMINI_API_KEY=' "$ENV_FILE"; then
+    read -rp "Enter your GEMINI_API_KEY (optional, press Enter to skip): " gemini_key
+    if [ -n "$gemini_key" ]; then
+        echo "GEMINI_API_KEY=$gemini_key" >> "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "✅ Gemini API key saved to $ENV_FILE"
+    fi
+fi
+
 # ── 3. Systemd user service ──────────────────────────────────────────────────
 mkdir -p "$SERVICE_DIR"
 cat > "$SERVICE_FILE" <<EOF

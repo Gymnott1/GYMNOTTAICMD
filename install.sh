@@ -46,21 +46,24 @@ info "Detected OS: $OS"
 info "Installing system dependencies..."
 case "$OS" in
     ubuntu|debian|linuxmint|pop)
-        sudo apt-get update -qq
-        sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop wget curl
+        if ! sudo apt-get update -qq; then
+            info "apt-get update failed (likely due to a third-party repo key issue)."
+            info "Continuing with existing package index and attempting dependency install..."
+        fi
+        sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop wget curl tesseract-ocr
         ;;
     fedora)
-        sudo dnf install -y gtk3-devel libX11-devel libXtst-devel libXext-devel scrot xdotool slop wget curl
+        sudo dnf install -y gtk3-devel libX11-devel libXtst-devel libXext-devel scrot xdotool slop wget curl tesseract
         ;;
     arch|manjaro)
-        sudo pacman -Sy --noconfirm gtk3 libx11 libxtst libxext scrot xdotool slop wget curl
+        sudo pacman -Sy --noconfirm gtk3 libx11 libxtst libxext scrot xdotool slop wget curl tesseract
         ;;
     opensuse*|sles)
-        sudo zypper install -y gtk3-devel libX11-devel libXtst-devel libXext-devel scrot xdotool wget curl
+        sudo zypper install -y gtk3-devel libX11-devel libXtst-devel libXext-devel scrot xdotool wget curl tesseract-ocr
         ;;
     *)
         info "Unknown OS — attempting apt-get (may fail)"
-        sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop wget curl || true
+        sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop wget curl tesseract-ocr || true
         ;;
 esac
 ok "System dependencies installed"
@@ -121,6 +124,16 @@ else
     ok "API key saved"
 fi
 
+if ! grep -q '^GEMINI_API_KEY=' "$ENV_FILE"; then
+    echo ""
+    read -rp "Enter your GEMINI_API_KEY (optional, press Enter to skip): " gemini_key
+    if [ -n "$gemini_key" ]; then
+        echo "GEMINI_API_KEY=$gemini_key" >> "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        ok "Gemini API key saved"
+    fi
+fi
+
 # Load key into current shell and persist
 grep -q 'gymnott_ai.env' ~/.bashrc  || echo '[ -f ~/.config/gymnott_ai.env ] && export $(cat ~/.config/gymnott_ai.env | xargs)' >> ~/.bashrc
 grep -q 'gymnott_ai.env' ~/.profile || echo '[ -f ~/.config/gymnott_ai.env ] && export $(cat ~/.config/gymnott_ai.env | xargs)' >> ~/.profile
@@ -128,7 +141,6 @@ grep -q 'gymnott_ai.env' ~/.profile || echo '[ -f ~/.config/gymnott_ai.env ] && 
 # ── Systemd user service ──────────────────────────────────────────────────────
 info "Installing systemd user service..."
 mkdir -p "$(dirname "$SERVICE_FILE")"
-APIKEY=$(grep GROQ_API_KEY "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Gymnott AI Desktop Assistant
@@ -136,7 +148,7 @@ After=default.target
 
 [Service]
 Type=simple
-Environment="GROQ_API_KEY=${APIKEY}"
+EnvironmentFile=${ENV_FILE}
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=${HOME}/.Xauthority"
 ExecStart=${INSTALL_DIR}/gymnott_ai
