@@ -14,6 +14,7 @@ import (
 var overlayWin *gtk.Window
 
 var prefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_prefs"
+var textExtractPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_text_extract_pref"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
 
@@ -45,6 +46,22 @@ func saveScreenshotPref(v bool) {
 		val = "1"
 	}
 	os.WriteFile(prefsFile, []byte(val), 0644)
+}
+
+func loadTextExtractPref() bool {
+	data, err := os.ReadFile(textExtractPrefsFile)
+	if err != nil {
+		return true // default: on
+	}
+	return strings.TrimSpace(string(data)) == "1"
+}
+
+func saveTextExtractPref(v bool) {
+	val := "0"
+	if v {
+		val = "1"
+	}
+	os.WriteFile(textExtractPrefsFile, []byte(val), 0644)
 }
 
 func applyCSS() {
@@ -113,7 +130,7 @@ func showOverlay() {
 
 	win, _ := gtk.WindowNew(gtk.WINDOW_TOPLEVEL)
 	win.SetTitle("Gymnott AI")
-	win.SetDefaultSize(560, 500)
+	win.SetDefaultSize(700, 500)
 	win.SetKeepAbove(true)
 	win.SetDecorated(true)
 	win.SetTypeHint(gdk.WINDOW_TYPE_HINT_DIALOG)
@@ -175,7 +192,7 @@ func showOverlay() {
 	inputScroll.SetMarginBottom(6)
 
 	// ── Options bar ──
-	optionsBar, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 12)
+	optionsBar, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 8)
 	optionsBar.SetMarginStart(14)
 	optionsBar.SetMarginEnd(14)
 	optionsBar.SetMarginBottom(6)
@@ -197,6 +214,19 @@ func showOverlay() {
 		if !active {
 			cropCheck.SetActive(false)
 		}
+	})
+
+	textExtractCheck, _ := gtk.CheckButtonNewWithLabel("Text Extract")
+	textExtractCheck.SetSizeRequest(115, -1)
+	textExtractCheck.SetActive(loadTextExtractPref())
+	textExtractCheck.SetSensitive(loadScreenshotPref())
+	textExtractCheck.SetTooltipText("Extract text from the screenshot and ask Gemini with that text")
+	textExtractCheck.Connect("toggled", func() {
+		saveTextExtractPref(textExtractCheck.GetActive())
+	})
+	screenshotCheck.Connect("toggled", func() {
+		active := screenshotCheck.GetActive()
+		textExtractCheck.SetSensitive(active)
 	})
 
 	tooltipModeCheck, _ = gtk.CheckButtonNewWithLabel("🔔 Tooltip mode")
@@ -229,6 +259,7 @@ func showOverlay() {
 
 	optionsBar.PackStart(screenshotCheck, false, false, 0)
 	optionsBar.PackStart(cropCheck, false, false, 0)
+	optionsBar.PackStart(textExtractCheck, false, false, 0)
 	optionsBar.PackStart(tooltipModeCheck, false, false, 0)
 	optionsBar.PackStart(tooltipTimeoutSpin, false, false, 0)
 	optionsBar.PackStart(secsLbl, false, false, 0)
@@ -283,9 +314,12 @@ func showOverlay() {
 		ibuf.SetText("")
 		withShot := screenshotCheck.GetActive()
 		crop := cropCheck.GetActive()
+		textExtract := textExtractCheck.GetActive()
 		if withShot {
 			if crop {
 				statusLabel.SetText("Select area to capture…")
+			} else if textExtract {
+				statusLabel.SetText("Taking screenshot for text extract…")
 			} else {
 				statusLabel.SetText("Taking screenshot…")
 			}
@@ -300,7 +334,7 @@ func showOverlay() {
 				scheduleOnMain(func() { win.Hide() })
 				time.Sleep(300 * time.Millisecond)
 			}
-			response := askAI(query, withShot, crop)
+			response := askAI(query, withShot, crop, textExtract)
 			scheduleOnMain(func() {
 				setWaiting(false)
 				win.ShowAll()

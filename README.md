@@ -40,7 +40,7 @@ The AI sees your screen and responds with commands, configs, and explanations â€
 
 ```bash
 # 1. Install system dependencies
-sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop
+sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev libxext-dev scrot xdotool slop tesseract-ocr
 
 # 2. Install Go (if not already installed)
 wget https://go.dev/dl/go1.22.4.linux-amd64.tar.gz
@@ -53,6 +53,7 @@ git clone https://github.com/Gymnott1/GYMNOTTAICMD.git
 cd GYMNOTTAICMD
 go mod tidy
 go build -o gymnott_ai .
+./gymnott_ai
 ```
 
 Or use the one-command install script:
@@ -72,10 +73,17 @@ export GROQ_API_KEY=gsk_your_key_here
 ./gymnott_ai
 ```
 
+For **Text Extract**, also set a Gemini key:
+
+```bash
+export GEMINI_API_KEY=your_gemini_key_here
+```
+
 To make the key permanent:
 
 ```bash
 echo 'export GROQ_API_KEY=gsk_your_key_here' >> ~/.bashrc
+echo 'export GEMINI_API_KEY=your_gemini_key_here' >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -83,7 +91,7 @@ source ~/.bashrc
 
 ```bash
 # Change key
-echo 'GROQ_API_KEY=gsk_your_new_key' > ~/.config/gymnott_ai.env
+printf 'GROQ_API_KEY=gsk_your_new_key\nGEMINI_API_KEY=your_gemini_key_here\n' > ~/.config/gymnott_ai.env
 systemctl --user restart gymnott_ai
 
 # Remove key
@@ -147,6 +155,7 @@ For a more robust setup â€” auto-restart on crash, runs silently in the backgrou
 
 ```bash
 echo 'GROQ_API_KEY=gsk_your_key_here' > ~/.config/gymnott_ai.env
+echo 'GEMINI_API_KEY=your_gemini_key_here' >> ~/.config/gymnott_ai.env
 chmod 600 ~/.config/gymnott_ai.env
 ```
 
