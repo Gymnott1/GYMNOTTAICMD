@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,15 @@ const (
 	groqTextModel = "llama-3.3-70b-versatile"
 	geminiModel   = "gemini-flash-latest"
 )
+
+// groqFallbackModels is tried in order when the primary text model is rate-limited.
+var groqFallbackModels = []string{
+	"llama-3.1-8b-instant",
+	"gemma2-9b-it",
+	"llama3-8b-8192",
+}
+
+var rateLimitRe = regexp.MustCompile(`try again in (\d+(?:\.\d+)?)s`)
 
 func takeScreenshotFile(crop bool) (string, error) {
 	path := fmt.Sprintf("/tmp/ai_screenshot_%d.png", time.Now().UnixMilli())
@@ -256,7 +267,7 @@ func extractTextFromImage(path string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func callGroq(payload map[string]any, apiKey string) string {
+func groqHTTP(payload map[string]any, apiKey string) string {
 	body, _ := json.Marshal(payload)
 	tmpFile := fmt.Sprintf("/tmp/ai_req_%d.json", time.Now().UnixMilli())
 	os.WriteFile(tmpFile, body, 0600)
@@ -271,6 +282,45 @@ func callGroq(payload map[string]any, apiKey string) string {
 		return "curl error: " + err.Error()
 	}
 	return parseGroqResponse(out)
+}
+
+// callGroq sends the request and handles rate-limit responses by waiting the
+// suggested duration and retrying, then falling back through groqFallbackModels.
+func callGroq(payload map[string]any, apiKey string) string {
+	const maxAttempts = 4
+	fallbackIdx := 0
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result := groqHTTP(payload, apiKey)
+
+		// Not a rate-limit error — return immediately.
+		if !strings.HasPrefix(result, "API Error: Rate limit") {
+			return result
+		}
+
+		// Parse suggested wait from the error message.
+		waitSecs := 15.0
+		if m := rateLimitRe.FindStringSubmatch(result); len(m) == 2 {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				waitSecs = v + 1.0 // small buffer
+			}
+		}
+
+		if attempt < maxAttempts {
+			// Switch to a fallback model after the first failure.
+			if fallbackIdx < len(groqFallbackModels) {
+				payload["model"] = groqFallbackModels[fallbackIdx]
+				fallbackIdx++
+				waitSecs = 2.0 // fallback model — different quota, minimal wait
+			}
+			time.Sleep(time.Duration(waitSecs * float64(time.Second)))
+			continue
+		}
+
+		// All attempts exhausted.
+		return fmt.Sprintf("⚠ All Groq models rate-limited. Last error: %s", result)
+	}
+	return "⚠ callGroq: unexpected exit"
 }
 
 func callGemini(payload map[string]any, apiKey string) string {

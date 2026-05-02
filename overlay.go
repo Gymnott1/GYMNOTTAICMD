@@ -636,6 +636,14 @@ If the goal is not achieved, provide only the next required actions and include 
 
 			nextCommands := extractShellBlocks(nextResponse)
 			for len(nextCommands) == 0 {
+				// If the model is still rate-limited, don't keep hammering it.
+				if strings.HasPrefix(nextResponse, "⚠ All Groq models rate-limited") ||
+					strings.HasPrefix(nextResponse, "API Error: Rate limit") {
+					onChunk("\n⏸ Rate limit persists across all models. Pausing 30s before retrying…\n")
+					onStatus("Rate limited — waiting 30s…")
+					appendAgenticLog("rate limit persists, sleeping 30s")
+					time.Sleep(30 * time.Second)
+				}
 				onStatus("Model returned no commands. Requesting explicit command block…")
 				appendAgenticLog("no shell blocks returned, requesting explicit commands")
 				retryPrompt := fmt.Sprintf(`Original user goal:
@@ -655,6 +663,7 @@ Return either:
 					return
 				}
 				nextCommands = extractShellBlocks(retryResponse)
+				nextResponse = retryResponse
 			}
 
 			current = nextCommands
