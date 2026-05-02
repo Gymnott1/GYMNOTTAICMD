@@ -5,6 +5,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,10 +25,17 @@ var tooltipModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_pref
 var tooltipTimeoutPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_timeout_pref"
 var agenticModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_agentic_pref"
 var continuousModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_continuous_pref"
+var agenticLogFile = os.Getenv("HOME") + "/.cache/gymnott_ai/agentic.log"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
 var agenticModeCheck *gtk.CheckButton
 var continuousModeCheck *gtk.CheckButton
+
+type agenticInputResult struct {
+	commands []string
+	password string
+	ok       bool
+}
 
 func loadBoolPref(path string, defaultValue bool) bool {
 	data, err := os.ReadFile(path)
@@ -245,7 +255,236 @@ func showAgenticRunDialog(parent *gtk.Window, commands []string, continuous bool
 	}
 }
 
-func executeCommandBlocks(round int, commands []string) string {
+func appendAgenticLog(line string) {
+	dir := filepath.Dir(agenticLogFile)
+	os.MkdirAll(dir, 0700)
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	f, err := os.OpenFile(agenticLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(fmt.Sprintf("[%s] %s\n", ts, strings.TrimSpace(line)))
+}
+
+func showAgenticLogDialog(parent *gtk.Window) {
+	dlg, _ := gtk.DialogNew()
+	dlg.SetTitle("Agentic Logs")
+	dlg.SetTransientFor(parent)
+	dlg.SetModal(true)
+	dlg.SetDefaultSize(760, 420)
+
+	content, _ := dlg.GetContentArea()
+	content.SetSpacing(0)
+
+	data, _ := os.ReadFile(agenticLogFile)
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		text = "No logs yet."
+	}
+
+	tv, _ := gtk.TextViewNew()
+	tv.SetEditable(false)
+	tv.SetMonospace(true)
+	tv.SetLeftMargin(8)
+	tv.SetRightMargin(8)
+	tv.SetTopMargin(8)
+	tv.SetBottomMargin(8)
+	tbuf, _ := tv.GetBuffer()
+	tbuf.SetText(text)
+
+	scroll, _ := gtk.ScrolledWindowNew(nil, nil)
+	scroll.SetPolicy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+	scroll.Add(tv)
+	scroll.SetMarginStart(12)
+	scroll.SetMarginEnd(12)
+	scroll.SetMarginTop(8)
+	scroll.SetMarginBottom(8)
+	content.PackStart(scroll, true, true, 0)
+
+	dlg.AddButton("Close", gtk.RESPONSE_CLOSE)
+	dlg.ShowAll()
+	dlg.Run()
+	dlg.Destroy()
+}
+
+func containsSudo(commands []string) bool {
+	for _, c := range commands {
+		if strings.Contains(c, "sudo ") {
+			return true
+		}
+	}
+	return false
+}
+
+func extractPlaceholders(commands []string) []string {
+	re := regexp.MustCompile(`<[^>\n]+>`)
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range commands {
+		for _, m := range re.FindAllString(c, -1) {
+			if !seen[m] {
+				seen[m] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+func applyPlaceholders(cmd string, values map[string]string) string {
+	out := cmd
+	for key, v := range values {
+		out = strings.ReplaceAll(out, key, v)
+	}
+	return out
+}
+
+func showSudoPasswordDialog(parent *gtk.Window) (string, bool) {
+	dlg, _ := gtk.DialogNew()
+	dlg.SetTitle("Sudo password required")
+	dlg.SetTransientFor(parent)
+	dlg.SetModal(true)
+
+	content, _ := dlg.GetContentArea()
+	content.SetSpacing(8)
+
+	lbl, _ := gtk.LabelNew("Commands include sudo. Enter your password to continue:")
+	lbl.SetXAlign(0)
+	content.PackStart(lbl, false, false, 8)
+
+	entry, _ := gtk.EntryNew()
+	entry.SetVisibility(false)
+	entry.SetPlaceholderText("sudo password")
+	entry.SetMarginStart(10)
+	entry.SetMarginEnd(10)
+	entry.SetMarginBottom(8)
+	content.PackStart(entry, false, false, 0)
+
+	dlg.AddButton("Cancel", gtk.RESPONSE_CANCEL)
+	dlg.AddButton("Continue", gtk.RESPONSE_ACCEPT)
+	dlg.ShowAll()
+
+	resp := dlg.Run()
+	pw, _ := entry.GetText()
+	dlg.Destroy()
+	if gtk.ResponseType(resp) != gtk.RESPONSE_ACCEPT {
+		return "", false
+	}
+	return pw, true
+}
+
+func showPlaceholderDialog(parent *gtk.Window, placeholders []string) (map[string]string, bool) {
+	if len(placeholders) == 0 {
+		return map[string]string{}, true
+	}
+
+	dlg, _ := gtk.DialogNew()
+	dlg.SetTitle("Command input required")
+	dlg.SetTransientFor(parent)
+	dlg.SetModal(true)
+	dlg.SetDefaultSize(640, 360)
+
+	content, _ := dlg.GetContentArea()
+	content.SetSpacing(6)
+
+	lbl, _ := gtk.LabelNew("Fill values for placeholders before execution:")
+	lbl.SetXAlign(0)
+	lbl.SetMarginTop(8)
+	lbl.SetMarginStart(10)
+	content.PackStart(lbl, false, false, 0)
+
+	grid, _ := gtk.GridNew()
+	grid.SetRowSpacing(6)
+	grid.SetColumnSpacing(8)
+	grid.SetMarginStart(10)
+	grid.SetMarginEnd(10)
+	grid.SetMarginBottom(8)
+
+	entries := map[string]*gtk.Entry{}
+	for i, p := range placeholders {
+		name, _ := gtk.LabelNew(p)
+		name.SetXAlign(0)
+		entry, _ := gtk.EntryNew()
+		entry.SetPlaceholderText(strings.Trim(p, "<>"))
+		entries[p] = entry
+		grid.Attach(name, 0, i, 1, 1)
+		grid.Attach(entry, 1, i, 1, 1)
+	}
+
+	content.PackStart(grid, true, true, 0)
+	dlg.AddButton("Cancel", gtk.RESPONSE_CANCEL)
+	dlg.AddButton("Continue", gtk.RESPONSE_ACCEPT)
+	dlg.ShowAll()
+
+	resp := dlg.Run()
+	if gtk.ResponseType(resp) != gtk.RESPONSE_ACCEPT {
+		dlg.Destroy()
+		return nil, false
+	}
+
+	values := map[string]string{}
+	for p, e := range entries {
+		v, _ := e.GetText()
+		values[p] = strings.TrimSpace(v)
+	}
+	dlg.Destroy()
+	return values, true
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func runShellBlockWithPassword(cmd string, sudoPassword string) string {
+	var out []byte
+	var err error
+
+	if strings.Contains(cmd, "sudo ") && sudoPassword != "" {
+		wrapped := fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' bash -lc %s", shellQuote(sudoPassword), shellQuote(cmd))
+		out, err = exec.Command("bash", "-c", wrapped).CombinedOutput()
+	} else {
+		out, err = exec.Command("bash", "-c", cmd).CombinedOutput()
+	}
+
+	result := strings.TrimSpace(string(out))
+	if err != nil {
+		if result != "" {
+			return fmt.Sprintf("✗ %s\n%s", err.Error(), result)
+		}
+		return "✗ " + err.Error()
+	}
+	if result == "" {
+		return "✓ (done, no output)"
+	}
+	return result
+}
+
+func resolveAgenticInputs(parent *gtk.Window, commands []string) agenticInputResult {
+	placeholders := extractPlaceholders(commands)
+	placeholderValues, ok := showPlaceholderDialog(parent, placeholders)
+	if !ok {
+		return agenticInputResult{ok: false}
+	}
+
+	prepared := make([]string, 0, len(commands))
+	for _, cmd := range commands {
+		prepared = append(prepared, applyPlaceholders(cmd, placeholderValues))
+	}
+
+	password := ""
+	if containsSudo(prepared) {
+		pw, ok := showSudoPasswordDialog(parent)
+		if !ok {
+			return agenticInputResult{ok: false}
+		}
+		password = pw
+	}
+
+	return agenticInputResult{commands: prepared, password: password, ok: true}
+}
+
+func executeCommandBlocks(round int, commands []string, sudoPassword string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("\n\n─── Execution output (round %d) ───\n", round))
 	for _, cmd := range commands {
@@ -254,28 +493,42 @@ func executeCommandBlocks(round int, commands []string) string {
 		if strings.Contains(cmd, "\n") {
 			sb.WriteString("(+ more lines)\n")
 		}
-		sb.WriteString(runShellBlock(cmd))
+		sb.WriteString(runShellBlockWithPassword(cmd, sudoPassword))
 		sb.WriteByte('\n')
 	}
 	return sb.String()
 }
 
-func runAgenticLoop(query string, commands []string, continuous bool, onChunk func(chunk string), onStatus func(status string), onDone func()) {
+func runAgenticLoop(parent *gtk.Window, query string, commands []string, continuous bool, onChunk func(chunk string), onStatus func(status string), onDone func()) {
 	go func() {
-		const maxRounds = 5
 		current := commands
 
-		for round := 1; round <= maxRounds; round++ {
-			onStatus(fmt.Sprintf("Running agentic commands (round %d/%d)…", round, maxRounds))
-			roundOutput := executeCommandBlocks(round, current)
-			onChunk(roundOutput)
-
-			if !continuous {
+		for round := 1; ; round++ {
+			resultCh := make(chan agenticInputResult, 1)
+			scheduleOnMain(func() {
+				resultCh <- resolveAgenticInputs(parent, current)
+			})
+			resolved := <-resultCh
+			if !resolved.ok {
+				onChunk("\n⚠ Continuous run cancelled by user input dialog.\n")
+				appendAgenticLog("run cancelled by user")
 				onDone()
 				return
 			}
 
-			onStatus(fmt.Sprintf("Analyzing results (round %d/%d)…", round, maxRounds))
+			onStatus(fmt.Sprintf("Running agentic commands in background (round %d)…", round))
+			appendAgenticLog(fmt.Sprintf("round %d executing %d command block(s)", round, len(resolved.commands)))
+			roundOutput := executeCommandBlocks(round, resolved.commands, resolved.password)
+			onChunk(roundOutput)
+			appendAgenticLog(roundOutput)
+
+			if !continuous {
+				appendAgenticLog("single-run mode finished")
+				onDone()
+				return
+			}
+
+			onStatus(fmt.Sprintf("Analyzing results (round %d)…", round))
 			followPrompt := fmt.Sprintf(`Original user goal:
 %s
 
@@ -287,25 +540,40 @@ If the goal is not achieved, provide only the next required actions and include 
 
 			nextResponse := askAI(followPrompt, false, false, false, true)
 			onChunk(fmt.Sprintf("\n\n─── Agentic follow-up (round %d) ───\n%s\n", round, nextResponse))
+			appendAgenticLog(fmt.Sprintf("round %d follow-up:\n%s", round, nextResponse))
 
 			if strings.Contains(strings.ToUpper(nextResponse), "TARGET_ACHIEVED") {
 				onChunk("\n✅ Continuous mode target achieved.\n")
+				appendAgenticLog("target achieved")
 				onDone()
 				return
 			}
 
 			nextCommands := extractShellBlocks(nextResponse)
-			if len(nextCommands) == 0 {
-				onChunk("\n⚠ Continuous mode stopped: no shell blocks returned for the next step.\n")
-				onDone()
-				return
+			for len(nextCommands) == 0 {
+				onStatus("Model returned no commands. Requesting explicit command block…")
+				appendAgenticLog("no shell blocks returned, requesting explicit commands")
+				retryPrompt := fmt.Sprintf(`Original user goal:
+%s
+
+You did not include executable shell blocks in your last reply.
+Return either:
+1) TARGET_ACHIEVED with a short summary, or
+2) at least one fenced bash/sh/shell/zsh code block with the exact next commands.`, query)
+				retryResponse := askAI(retryPrompt, false, false, false, true)
+				onChunk(fmt.Sprintf("\n\n─── Agentic retry (round %d) ───\n%s\n", round, retryResponse))
+				appendAgenticLog(fmt.Sprintf("round %d retry:\n%s", round, retryResponse))
+				if strings.Contains(strings.ToUpper(retryResponse), "TARGET_ACHIEVED") {
+					onChunk("\n✅ Continuous mode target achieved.\n")
+					appendAgenticLog("target achieved")
+					onDone()
+					return
+				}
+				nextCommands = extractShellBlocks(retryResponse)
 			}
 
 			current = nextCommands
 		}
-
-		onChunk("\n⚠ Continuous mode stopped after max rounds (5). Review output and continue manually if needed.\n")
-		onDone()
 	}()
 }
 
@@ -419,7 +687,14 @@ func showOverlay() {
 	newChatBtnCtx, _ := newChatBtn.GetStyleContext()
 	newChatBtnCtx.AddProvider(newChatBtnCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+	logsBtn, _ := gtk.ButtonNewWithLabel("🧾 Logs")
+	logsBtnCss, _ := gtk.CssProviderNew()
+	logsBtnCss.LoadFromData(`button { background: #2a2a4a; color: #a0a0c0; font-size: 11px; padding: 4px 10px; }`)
+	logsBtnCtx, _ := logsBtn.GetStyleContext()
+	logsBtnCtx.AddProvider(logsBtnCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
 	titleBar.PackStart(titleLbl, true, true, 0)
+	titleBar.PackEnd(logsBtn, false, false, 0)
 	titleBar.PackEnd(newChatBtn, false, false, 0)
 
 	// ── Input area ──
@@ -492,7 +767,7 @@ func showOverlay() {
 
 	continuousModeCheck, _ = gtk.CheckButtonNewWithLabel("♻ Continuous")
 	continuousModeCheck.SetActive(loadContinuousModePref())
-	continuousModeCheck.SetTooltipText("When Agentic is on, keep iterating commands until TARGET_ACHIEVED or max rounds")
+	continuousModeCheck.SetTooltipText("When Agentic is on, keep iterating commands until TARGET_ACHIEVED")
 	continuousModeCheck.Connect("toggled", func() {
 		saveContinuousModePref(continuousModeCheck.GetActive())
 	})
@@ -619,7 +894,8 @@ func showOverlay() {
 				if agentic {
 					if cmds := extractShellBlocks(response); len(cmds) > 0 {
 						showAgenticRunDialog(win, cmds, continuous, func() {
-							runAgenticLoop(query, cmds, continuous, func(chunk string) {
+							setWaiting(true)
+							runAgenticLoop(win, query, cmds, continuous, func(chunk string) {
 								scheduleOnMain(func() {
 									end := buf.GetEndIter()
 									buf.Insert(end, chunk)
@@ -632,6 +908,7 @@ func showOverlay() {
 								})
 							}, func() {
 								scheduleOnMain(func() {
+									setWaiting(false)
 									statusLabel.SetText("Done  ·  Enter to ask again")
 								})
 							})
@@ -646,6 +923,10 @@ func showOverlay() {
 		clearHistory()
 		buf.SetText("")
 		statusLabel.SetText("New chat started  ·  Enter to send")
+	})
+
+	logsBtn.Connect("clicked", func() {
+		showAgenticLogDialog(win)
 	})
 
 	sendBtn.Connect("clicked", sendFn)
