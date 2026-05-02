@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,12 +16,47 @@ var overlayWin *gtk.Window
 
 var prefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_prefs"
 var textExtractPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_text_extract_pref"
+var cropPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_crop_pref"
+var tooltipModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_pref"
+var tooltipTimeoutPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_timeout_pref"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
 
+func loadBoolPref(path string, defaultValue bool) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultValue
+	}
+	return strings.TrimSpace(string(data)) == "1"
+}
+
+func saveBoolPref(path string, value bool) {
+	if value {
+		os.WriteFile(path, []byte("1"), 0644)
+		return
+	}
+	os.WriteFile(path, []byte("0"), 0644)
+}
+
+func loadIntPref(path string, defaultValue int) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultValue
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+func saveIntPref(path string, value int) {
+	os.WriteFile(path, []byte(strconv.Itoa(value)), 0644)
+}
+
 func getTooltipMode() bool {
 	if tooltipModeCheck == nil {
-		return false
+		return loadTooltipModePref()
 	}
 	return tooltipModeCheck.GetActive()
 }
@@ -29,39 +65,79 @@ func getScreenshotPrefs() (withShot, crop bool) {
 	if cropCheckGlobal != nil {
 		return loadScreenshotPref(), cropCheckGlobal.GetActive()
 	}
-	return loadScreenshotPref(), false
+	return loadScreenshotPref(), loadCropPref()
 }
 
 func loadScreenshotPref() bool {
-	data, err := os.ReadFile(prefsFile)
-	if err != nil {
-		return true // default: on
-	}
-	return strings.TrimSpace(string(data)) == "1"
+	return loadBoolPref(prefsFile, true)
 }
 
 func saveScreenshotPref(v bool) {
-	val := "0"
-	if v {
-		val = "1"
-	}
-	os.WriteFile(prefsFile, []byte(val), 0644)
+	saveBoolPref(prefsFile, v)
 }
 
 func loadTextExtractPref() bool {
-	data, err := os.ReadFile(textExtractPrefsFile)
-	if err != nil {
-		return true // default: on
-	}
-	return strings.TrimSpace(string(data)) == "1"
+	return loadBoolPref(textExtractPrefsFile, true)
 }
 
 func saveTextExtractPref(v bool) {
-	val := "0"
-	if v {
-		val = "1"
+	saveBoolPref(textExtractPrefsFile, v)
+}
+
+func loadCropPref() bool {
+	return loadBoolPref(cropPrefsFile, false)
+}
+
+func saveCropPref(v bool) {
+	saveBoolPref(cropPrefsFile, v)
+}
+
+func loadTooltipModePref() bool {
+	return loadBoolPref(tooltipModePrefsFile, false)
+}
+
+func saveTooltipModePref(v bool) {
+	saveBoolPref(tooltipModePrefsFile, v)
+}
+
+func loadTooltipTimeoutPref() int {
+	return loadIntPref(tooltipTimeoutPrefsFile, 30)
+}
+
+func saveTooltipTimeoutPref(v int) {
+	saveIntPref(tooltipTimeoutPrefsFile, v)
+}
+
+func showResponseInTooltip(response string) {
+	tooltipTimeoutSecs = loadTooltipTimeoutPref()
+	showFollowerTooltip(response)
+}
+
+func runQuickTooltipAsk() {
+	if !getTooltipMode() {
+		scheduleOnMain(showOverlay)
+		return
 	}
-	os.WriteFile(textExtractPrefsFile, []byte(val), 0644)
+
+	_, crop := getScreenshotPrefs()
+	textExtract := loadTextExtractPref()
+	tooltipTimeoutSecs = loadTooltipTimeoutPref()
+	setWaiting(true)
+
+	go func() {
+		scheduleOnMain(func() {
+			if overlayWin != nil {
+				overlayWin.Hide()
+			}
+		})
+		time.Sleep(300 * time.Millisecond)
+
+		response := askAI(defaultQuickAskPrompt, true, crop, textExtract)
+		scheduleOnMain(func() {
+			setWaiting(false)
+			showResponseInTooltip(response)
+		})
+	}()
 }
 
 func applyCSS() {
@@ -125,6 +201,8 @@ func showOverlay() {
 		overlayWin.Present()
 		return
 	}
+
+	tooltipTimeoutSecs = loadTooltipTimeoutPref()
 
 	applyCSS()
 
@@ -205,15 +283,15 @@ func showOverlay() {
 
 	cropCheck, _ := gtk.CheckButtonNewWithLabel("✂ Crop")
 	cropCheckGlobal = cropCheck
-	cropCheck.SetActive(false)
+	cropCheck.SetActive(loadCropPref())
 	cropCheck.SetSensitive(loadScreenshotPref())
+	cropCheck.Connect("toggled", func() {
+		saveCropPref(cropCheck.GetActive())
+	})
 	screenshotCheck.Connect("toggled", func() {
 		active := screenshotCheck.GetActive()
 		saveScreenshotPref(active)
 		cropCheck.SetSensitive(active)
-		if !active {
-			cropCheck.SetActive(false)
-		}
 	})
 
 	textExtractCheck, _ := gtk.CheckButtonNewWithLabel("Text Extract")
@@ -230,7 +308,7 @@ func showOverlay() {
 	})
 
 	tooltipModeCheck, _ = gtk.CheckButtonNewWithLabel("🔔 Tooltip mode")
-	tooltipModeCheck.SetActive(false)
+	tooltipModeCheck.SetActive(loadTooltipModePref())
 	tooltipCss, _ := gtk.CssProviderNew()
 	tooltipCss.LoadFromData(`checkbutton:checked { color: #f0a500; }`)
 	tooltipCtx, _ := tooltipModeCheck.GetStyleContext()
@@ -243,11 +321,13 @@ func showOverlay() {
 	tooltipTimeoutSpin.SetSizeRequest(60, -1)
 	tooltipTimeoutSpin.Connect("value-changed", func() {
 		tooltipTimeoutSecs = tooltipTimeoutSpin.GetValueAsInt()
+		saveTooltipTimeoutPref(tooltipTimeoutSecs)
 	})
 	tooltipModeCheck.Connect("toggled", func() {
+		saveTooltipModePref(tooltipModeCheck.GetActive())
 		tooltipTimeoutSpin.SetSensitive(tooltipModeCheck.GetActive())
 	})
-	tooltipTimeoutSpin.SetSensitive(false)
+	tooltipTimeoutSpin.SetSensitive(tooltipModeCheck.GetActive())
 
 	secsLbl, _ := gtk.LabelNew("s")
 
@@ -340,6 +420,9 @@ func showOverlay() {
 				win.ShowAll()
 				win.Present()
 				renderMarkdown(buf, t, responseView, response)
+				if getTooltipMode() {
+					showResponseInTooltip(response)
+				}
 				statusLabel.SetText("Done  ·  Enter to ask again")
 				sendBtn.SetSensitive(true)
 				adj := responseScroll.GetVAdjustment()
