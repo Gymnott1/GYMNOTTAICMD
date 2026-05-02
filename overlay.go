@@ -26,10 +26,41 @@ var tooltipTimeoutPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_t
 var agenticModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_agentic_pref"
 var continuousModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_continuous_pref"
 var agenticLogFile = os.Getenv("HOME") + "/.cache/gymnott_ai/agentic.log"
+var placeholderCacheFile = os.Getenv("HOME") + "/.cache/gymnott_ai/placeholders.json"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
 var agenticModeCheck *gtk.CheckButton
 var continuousModeCheck *gtk.CheckButton
+
+// cachedPlaceholderValues persists placeholder answers across runs (file-backed).
+var cachedPlaceholderValues = map[string]string{}
+
+// cachedSudoPassword is kept in memory only — never written to disk.
+var cachedSudoPassword string
+
+func loadPlaceholderCache() {
+	data, err := os.ReadFile(placeholderCacheFile)
+	if err != nil {
+		return
+	}
+	// simple key=value lines
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) == 2 && parts[0] != "" {
+			cachedPlaceholderValues[parts[0]] = parts[1]
+		}
+	}
+}
+
+func savePlaceholderCache() {
+	dir := filepath.Dir(placeholderCacheFile)
+	os.MkdirAll(dir, 0700)
+	var sb strings.Builder
+	for k, v := range cachedPlaceholderValues {
+		sb.WriteString(k + "=" + v + "\n")
+	}
+	os.WriteFile(placeholderCacheFile, []byte(sb.String()), 0600)
+}
 
 type agenticInputResult struct {
 	commands []string
@@ -302,6 +333,30 @@ func showAgenticLogDialog(parent *gtk.Window) {
 	scroll.SetMarginBottom(8)
 	content.PackStart(scroll, true, true, 0)
 
+	btnBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 6)
+	btnBox.SetMarginStart(12)
+	btnBox.SetMarginEnd(12)
+	btnBox.SetMarginBottom(8)
+
+	forgetBtn, _ := gtk.ButtonNewWithLabel("🗑 Forget saved inputs")
+	forgetBtn.SetTooltipText("Clear saved placeholder values and sudo password from memory")
+	forgetBtn.Connect("clicked", func() {
+		cachedPlaceholderValues = map[string]string{}
+		cachedSudoPassword = ""
+		os.Remove(placeholderCacheFile)
+		tbuf.SetText("Saved inputs cleared.")
+	})
+
+	clearLogBtn, _ := gtk.ButtonNewWithLabel("🧹 Clear log")
+	clearLogBtn.Connect("clicked", func() {
+		os.Remove(agenticLogFile)
+		tbuf.SetText("Log cleared.")
+	})
+
+	btnBox.PackStart(forgetBtn, false, false, 0)
+	btnBox.PackStart(clearLogBtn, false, false, 0)
+	content.PackStart(btnBox, false, false, 0)
+
 	dlg.AddButton("Close", gtk.RESPONSE_CLOSE)
 	dlg.ShowAll()
 	dlg.Run()
@@ -341,6 +396,11 @@ func applyPlaceholders(cmd string, values map[string]string) string {
 }
 
 func showSudoPasswordDialog(parent *gtk.Window) (string, bool) {
+	// Already cached this session — skip asking.
+	if cachedSudoPassword != "" {
+		return cachedSudoPassword, true
+	}
+
 	dlg, _ := gtk.DialogNew()
 	dlg.SetTitle("Sudo password required")
 	dlg.SetTransientFor(parent)
@@ -349,7 +409,7 @@ func showSudoPasswordDialog(parent *gtk.Window) (string, bool) {
 	content, _ := dlg.GetContentArea()
 	content.SetSpacing(8)
 
-	lbl, _ := gtk.LabelNew("Commands include sudo. Enter your password to continue:")
+	lbl, _ := gtk.LabelNew("Commands include sudo. Enter your password (stored for this session only):")
 	lbl.SetXAlign(0)
 	content.PackStart(lbl, false, false, 8)
 
@@ -371,12 +431,30 @@ func showSudoPasswordDialog(parent *gtk.Window) (string, bool) {
 	if gtk.ResponseType(resp) != gtk.RESPONSE_ACCEPT {
 		return "", false
 	}
+	cachedSudoPassword = pw
 	return pw, true
 }
 
 func showPlaceholderDialog(parent *gtk.Window, placeholders []string) (map[string]string, bool) {
 	if len(placeholders) == 0 {
 		return map[string]string{}, true
+	}
+
+	// Check if all placeholders are already cached.
+	allCached := true
+	for _, p := range placeholders {
+		if cachedPlaceholderValues[p] == "" {
+			allCached = false
+			break
+		}
+	}
+	if allCached {
+		// Return a copy of cached values without prompting.
+		values := map[string]string{}
+		for _, p := range placeholders {
+			values[p] = cachedPlaceholderValues[p]
+		}
+		return values, true
 	}
 
 	dlg, _ := gtk.DialogNew()
@@ -388,7 +466,7 @@ func showPlaceholderDialog(parent *gtk.Window, placeholders []string) (map[strin
 	content, _ := dlg.GetContentArea()
 	content.SetSpacing(6)
 
-	lbl, _ := gtk.LabelNew("Fill values for placeholders before execution:")
+	lbl, _ := gtk.LabelNew("Fill values for placeholders (saved for future runs — edit to change):")
 	lbl.SetXAlign(0)
 	lbl.SetMarginTop(8)
 	lbl.SetMarginStart(10)
@@ -407,6 +485,10 @@ func showPlaceholderDialog(parent *gtk.Window, placeholders []string) (map[strin
 		name.SetXAlign(0)
 		entry, _ := gtk.EntryNew()
 		entry.SetPlaceholderText(strings.Trim(p, "<>"))
+		// Pre-fill with any previously saved value.
+		if saved := cachedPlaceholderValues[p]; saved != "" {
+			entry.SetText(saved)
+		}
 		entries[p] = entry
 		grid.Attach(name, 0, i, 1, 1)
 		grid.Attach(entry, 1, i, 1, 1)
@@ -426,8 +508,11 @@ func showPlaceholderDialog(parent *gtk.Window, placeholders []string) (map[strin
 	values := map[string]string{}
 	for p, e := range entries {
 		v, _ := e.GetText()
-		values[p] = strings.TrimSpace(v)
+		v = strings.TrimSpace(v)
+		values[p] = v
+		cachedPlaceholderValues[p] = v // update cache
 	}
+	savePlaceholderCache()
 	dlg.Destroy()
 	return values, true
 }
@@ -639,6 +724,7 @@ func showOverlay() {
 		return
 	}
 
+	loadPlaceholderCache()
 	tooltipTimeoutSecs = loadTooltipTimeoutPref()
 
 	applyCSS()
