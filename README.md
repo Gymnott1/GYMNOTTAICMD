@@ -235,6 +235,7 @@ systemctl --user restart gymnott_ai #after changing key
 | ✂️ Crop | Drag-select a region instead of the full window (requires 📸 checked) |
 | 📝 Text Extract | OCR the screenshot with `tesseract`, send extracted text to **Gemini** (requires 📸 checked and `GEMINI_API_KEY` set) |
 | 🤖 Agentic | Produces safer action plans with executable commands and verification steps |
+| ♻ Continuous | When Agentic is enabled, re-runs analyze/execute cycles until `TARGET_ACHIEVED` or a max of 5 rounds |
 
 Agentic mode is intended for legitimate admin/dev automation on systems you own or are authorized to manage. Requests involving piracy or unauthorized access/scanning are blocked.
 

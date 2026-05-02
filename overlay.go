@@ -21,9 +21,11 @@ var cropPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_crop_pref"
 var tooltipModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_pref"
 var tooltipTimeoutPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_timeout_pref"
 var agenticModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_agentic_pref"
+var continuousModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_continuous_pref"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
 var agenticModeCheck *gtk.CheckButton
+var continuousModeCheck *gtk.CheckButton
 
 func loadBoolPref(path string, defaultValue bool) bool {
 	data, err := os.ReadFile(path)
@@ -126,6 +128,21 @@ func getAgenticMode() bool {
 	return agenticModeCheck.GetActive()
 }
 
+func loadContinuousModePref() bool {
+	return loadBoolPref(continuousModePrefsFile, false)
+}
+
+func saveContinuousModePref(v bool) {
+	saveBoolPref(continuousModePrefsFile, v)
+}
+
+func getContinuousMode() bool {
+	if continuousModeCheck == nil {
+		return loadContinuousModePref()
+	}
+	return continuousModeCheck.GetActive()
+}
+
 func showResponseInTooltip(response string) {
 	tooltipTimeoutSecs = loadTooltipTimeoutPref()
 	showFollowerTooltip(response)
@@ -159,9 +176,8 @@ func runQuickTooltipAsk() {
 }
 
 // showAgenticRunDialog presents a confirmation dialog listing extracted shell
-// blocks. If the user clicks Run, commands execute sequentially in a goroutine
-// and onDone is called with the combined output string.
-func showAgenticRunDialog(parent *gtk.Window, commands []string, onDone func(output string)) {
+// blocks. If the user clicks Run, onRun is called.
+func showAgenticRunDialog(parent *gtk.Window, commands []string, continuous bool, onRun func()) {
 	dlg, _ := gtk.DialogNew()
 	dlg.SetTitle("▶ Run commands?")
 	dlg.SetTransientFor(parent)
@@ -182,7 +198,11 @@ func showAgenticRunDialog(parent *gtk.Window, commands []string, onDone func(out
 	dlgScreen := dlg.GetScreen()
 	gtk.AddProviderForScreen(dlgScreen, dlgCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-	lbl, _ := gtk.LabelNew(fmt.Sprintf("Agentic mode detected %d command block(s). Review and run?", len(commands)))
+	modeText := "off"
+	if continuous {
+		modeText = "on"
+	}
+	lbl, _ := gtk.LabelNew(fmt.Sprintf("Agentic mode detected %d command block(s). Review and run? Continuous mode: %s", len(commands), modeText))
 	lbl.SetXAlign(0)
 	content.PackStart(lbl, false, false, 0)
 
@@ -221,21 +241,72 @@ func showAgenticRunDialog(parent *gtk.Window, commands []string, onDone func(out
 	dlg.Destroy()
 
 	if gtk.ResponseType(resp) == gtk.RESPONSE_ACCEPT {
-		go func() {
-			var sb strings.Builder
-			sb.WriteString("\n\n─── Execution output ───\n")
-			for _, cmd := range commands {
-				firstLine := strings.SplitN(cmd, "\n", 2)[0]
-				sb.WriteString(fmt.Sprintf("\n$ %s\n", firstLine))
-				if strings.Contains(cmd, "\n") {
-					sb.WriteString("(+ more lines)\n")
-				}
-				sb.WriteString(runShellBlock(cmd))
-				sb.WriteByte('\n')
-			}
-			onDone(sb.String())
-		}()
+		onRun()
 	}
+}
+
+func executeCommandBlocks(round int, commands []string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n\n─── Execution output (round %d) ───\n", round))
+	for _, cmd := range commands {
+		firstLine := strings.SplitN(cmd, "\n", 2)[0]
+		sb.WriteString(fmt.Sprintf("\n$ %s\n", firstLine))
+		if strings.Contains(cmd, "\n") {
+			sb.WriteString("(+ more lines)\n")
+		}
+		sb.WriteString(runShellBlock(cmd))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+func runAgenticLoop(query string, commands []string, continuous bool, onChunk func(chunk string), onStatus func(status string), onDone func()) {
+	go func() {
+		const maxRounds = 5
+		current := commands
+
+		for round := 1; round <= maxRounds; round++ {
+			onStatus(fmt.Sprintf("Running agentic commands (round %d/%d)…", round, maxRounds))
+			roundOutput := executeCommandBlocks(round, current)
+			onChunk(roundOutput)
+
+			if !continuous {
+				onDone()
+				return
+			}
+
+			onStatus(fmt.Sprintf("Analyzing results (round %d/%d)…", round, maxRounds))
+			followPrompt := fmt.Sprintf(`Original user goal:
+%s
+
+Execution output from round %d:
+%s
+
+If the goal is achieved, start your response with TARGET_ACHIEVED and include a short summary.
+If the goal is not achieved, provide only the next required actions and include shell commands in fenced bash/sh/shell/zsh blocks.`, query, round, roundOutput)
+
+			nextResponse := askAI(followPrompt, false, false, false, true)
+			onChunk(fmt.Sprintf("\n\n─── Agentic follow-up (round %d) ───\n%s\n", round, nextResponse))
+
+			if strings.Contains(strings.ToUpper(nextResponse), "TARGET_ACHIEVED") {
+				onChunk("\n✅ Continuous mode target achieved.\n")
+				onDone()
+				return
+			}
+
+			nextCommands := extractShellBlocks(nextResponse)
+			if len(nextCommands) == 0 {
+				onChunk("\n⚠ Continuous mode stopped: no shell blocks returned for the next step.\n")
+				onDone()
+				return
+			}
+
+			current = nextCommands
+		}
+
+		onChunk("\n⚠ Continuous mode stopped after max rounds (5). Review output and continue manually if needed.\n")
+		onDone()
+	}()
 }
 
 func applyCSS() {
@@ -419,6 +490,13 @@ func showOverlay() {
 		saveAgenticModePref(agenticModeCheck.GetActive())
 	})
 
+	continuousModeCheck, _ = gtk.CheckButtonNewWithLabel("♻ Continuous")
+	continuousModeCheck.SetActive(loadContinuousModePref())
+	continuousModeCheck.SetTooltipText("When Agentic is on, keep iterating commands until TARGET_ACHIEVED or max rounds")
+	continuousModeCheck.Connect("toggled", func() {
+		saveContinuousModePref(continuousModeCheck.GetActive())
+	})
+
 	// Timeout spin button (seconds)
 	tooltipTimeoutSpin, _ := gtk.SpinButtonNewWithRange(5, 300, 5)
 	tooltipTimeoutSpin.SetValue(float64(tooltipTimeoutSecs))
@@ -447,6 +525,7 @@ func showOverlay() {
 	optionsBar.PackStart(textExtractCheck, false, false, 0)
 	optionsBar.PackStart(tooltipModeCheck, false, false, 0)
 	optionsBar.PackStart(agenticModeCheck, false, false, 0)
+	optionsBar.PackStart(continuousModeCheck, false, false, 0)
 	optionsBar.PackStart(tooltipTimeoutSpin, false, false, 0)
 	optionsBar.PackStart(secsLbl, false, false, 0)
 	optionsBar.PackEnd(sendBtn, false, false, 0)
@@ -521,6 +600,7 @@ func showOverlay() {
 				time.Sleep(300 * time.Millisecond)
 			}
 			agentic := getAgenticMode()
+			continuous := getContinuousMode()
 			response := askAI(query, withShot, crop, textExtract, agentic)
 			scheduleOnMain(func() {
 				setWaiting(false)
@@ -538,12 +618,22 @@ func showOverlay() {
 				// Full agentic: extract shell blocks and offer to run them
 				if agentic {
 					if cmds := extractShellBlocks(response); len(cmds) > 0 {
-						showAgenticRunDialog(win, cmds, func(output string) {
-							scheduleOnMain(func() {
-								end := buf.GetEndIter()
-								buf.Insert(end, output)
-								adj2 := responseScroll.GetVAdjustment()
-								adj2.SetValue(adj2.GetUpper())
+						showAgenticRunDialog(win, cmds, continuous, func() {
+							runAgenticLoop(query, cmds, continuous, func(chunk string) {
+								scheduleOnMain(func() {
+									end := buf.GetEndIter()
+									buf.Insert(end, chunk)
+									adj2 := responseScroll.GetVAdjustment()
+									adj2.SetValue(adj2.GetUpper())
+								})
+							}, func(status string) {
+								scheduleOnMain(func() {
+									statusLabel.SetText(status)
+								})
+							}, func() {
+								scheduleOnMain(func() {
+									statusLabel.SetText("Done  ·  Enter to ask again")
+								})
 							})
 						})
 					}
