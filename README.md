@@ -1,6 +1,6 @@
 # GYMNOTT AI — Linux Desktop AI Assistant
 
-> Ask AI anything on your screen with a single hotkey. Powered by Groq's ultra-fast LLM inference.
+> Ask AI anything on your screen with fast global hotkeys. Powered by Groq's ultra-fast LLM inference.
 
 ![Linux](https://img.shields.io/badge/Linux-Mint%20%2F%20Ubuntu-green)
 ![Go](https://img.shields.io/badge/Go-1.22+-blue)
@@ -8,16 +8,17 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Stars](https://img.shields.io/github/stars/Gymnott1/GYMNOTTAICMD?style=social)
 
-A lightweight, always-on Linux desktop AI assistant built in Go. Press `Ctrl+Space` from anywhere on your desktop to instantly ask AI about what's on your screen — errors, configs, code, logs, anything.
+A lightweight, always-on Linux desktop AI assistant built in Go. Press `Ctrl+Space` to open the full overlay or `Ctrl+Alt+Space` to send a quick screenshot-based ask straight to the tooltip when tooltip mode is enabled.
 
 ---
 
 ## ✨ Features
 
 - 🔴 **Visual mouse follower** — a small red dot that shadows your real cursor (click-through, always on top), morphs into a **spinning loader** while the AI is thinking
-- ⚡ **Global hotkey** — `Ctrl+Space` opens the AI overlay instantly from any app
+- ⚡ **Global hotkeys** — `Ctrl+Space` opens the AI overlay, `Ctrl+Alt+Space` sends a quick screenshot-based response straight to the tooltip when tooltip mode is enabled
 - 📸 **Screenshot mode** — hides the overlay, captures the active window, and sends it to the AI vision model
 - ✂️ **Crop mode** — drag to select a specific region of the screen instead of the full window
+- 🤖 **Agentic mode** — asks for action-oriented, executable steps/commands for admin and automation tasks
 - 💬 **Multi-turn chat** — full conversation history kept across messages in the same session
 - 🗑️ **New Chat** — wipe history and start a completely fresh conversation
 - 📝 **Markdown rendering** — headings, bold, italic, inline code, fenced code blocks with a **📋 Copy** button per block
@@ -30,6 +31,7 @@ A lightweight, always-on Linux desktop AI assistant built in Go. Press `Ctrl+Spa
 
 ```
 Ctrl+Space  →  type your question  →  Enter
+Ctrl+Alt+Space  →  quick screenshot ask  →  response in tooltip
 ```
 
 The AI sees your screen and responds with commands, configs, and explanations — no copy-pasting errors into a browser.
@@ -220,6 +222,7 @@ systemctl --user restart gymnott_ai #after changing key
 | Hotkey | Action |
 |--------|--------|
 | `Ctrl+Space` | Open / focus AI overlay |
+| `Ctrl+Alt+Space` | Quick screenshot ask to tooltip using saved settings when tooltip mode is enabled |
 | `Enter` | Send message |
 | `Shift+Enter` | New line in input |
 | `Escape` | Hide overlay |
@@ -231,6 +234,9 @@ systemctl --user restart gymnott_ai #after changing key
 | 📸 Send screenshot | Hides the overlay, captures the active window, sends it with your message |
 | ✂️ Crop | Drag-select a region instead of the full window (requires 📸 checked) |
 | 📝 Text Extract | OCR the screenshot with `tesseract`, send extracted text to **Gemini** (requires 📸 checked and `GEMINI_API_KEY` set) |
+| 🤖 Agentic | Produces safer action plans with executable commands and verification steps |
+
+Agentic mode is intended for legitimate admin/dev automation on systems you own or are authorized to manage. Requests involving piracy or unauthorized access/scanning are blocked.
 
 ### Chat history
 
@@ -244,7 +250,7 @@ The AI remembers previous messages in the same session. Click **🗑 New Chat** 
 |------|---------|
 | `main.go` | GTK init, starts goroutines |
 | `follower.go` | Transparent X11 window — red dot / spinning loader |
-| `hotkey.go` | XGrabKey global `Ctrl+Space` listener |
+| `hotkey.go` | XGrabKey global `Ctrl+Space` and `Ctrl+Alt+Space` listener |
 | `xutil.go` | CGo X11 mouse position + GTK main-thread scheduler |
 | `overlay.go` | Always-on-top input/response GTK window |
 | `ai.go` | Screenshot, Groq API via curl, markdown renderer, chat history |

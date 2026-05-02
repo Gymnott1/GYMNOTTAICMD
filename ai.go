@@ -78,6 +78,16 @@ Rules:
 - Avoid interactive wizards when a non-interactive command or explicit instructions are available.
 - If the screen shows an error, explain the likely cause and the next practical step.`
 
+const agenticSystemPrompt = `You are a senior Linux automation assistant in AGENTIC MODE.
+Return practical, executable actions and be explicit about assumptions.
+Rules:
+- Prefer non-interactive commands and deterministic scripts.
+- Use markdown with a short plan plus code blocks for commands.
+- Include verification commands after major steps.
+- Use <placeholder> for values the user must replace.
+- Refuse or redirect requests for piracy, malware, credential theft, data exfiltration, or unauthorized scanning/access.
+- For security testing, require explicit ownership/authorization and stay defensive.`
+
 const defaultQuickAskPrompt = "Analyze this screen or selected region. Explain what it shows, point out errors or important details, and give the most useful next steps. Include commands, instructions, or links only when they help."
 
 // chatHistory holds the conversation turns for multi-turn context.
@@ -122,9 +132,9 @@ func getGeminiAPIKey() string {
 	return ""
 }
 
-func askAI(query string, withScreenshot, crop, textExtract bool) string {
+func askAI(query string, withScreenshot, crop, textExtract, agentic bool) string {
 	if withScreenshot && textExtract {
-		return askGeminiWithExtractedText(query, crop)
+		return askGeminiWithExtractedText(query, crop, agentic)
 	}
 
 	apiKey := getAPIKey()
@@ -159,8 +169,13 @@ func askAI(query string, withScreenshot, crop, textExtract bool) string {
 
 	chatHistory = append(chatHistory, userMsg)
 
+	system := systemPrompt
+	if agentic {
+		system = agenticSystemPrompt
+	}
+
 	messages := append([]map[string]any{
-		{"role": "system", "content": systemPrompt},
+		{"role": "system", "content": system},
 	}, chatHistory...)
 
 	payload := map[string]any{
@@ -182,7 +197,7 @@ func askAI(query string, withScreenshot, crop, textExtract bool) string {
 	return result
 }
 
-func askGeminiWithExtractedText(query string, crop bool) string {
+func askGeminiWithExtractedText(query string, crop bool, agentic bool) string {
 	apiKey := getGeminiAPIKey()
 	if apiKey == "" {
 		return "Error: GEMINI_API_KEY environment variable not set."
@@ -206,7 +221,12 @@ func askGeminiWithExtractedText(query string, crop bool) string {
 	if userPrompt == "" {
 		userPrompt = "Use the extracted screen text to help me."
 	}
-	prompt := systemPrompt +
+	system := systemPrompt
+	if agentic {
+		system = agenticSystemPrompt
+	}
+
+	prompt := system +
 		"\n\nUser request:\n" + userPrompt +
 		"\n\nExtracted text from screenshot:\n" + extractedText
 
@@ -326,6 +346,57 @@ func parseGroqResponse(data []byte) string {
 		return "No response from API."
 	}
 	return resp.Choices[0].Message.Content
+}
+
+// ── Shell block extraction + execution ──────────────────────────────────────
+
+// extractShellBlocks parses fenced ```bash / sh / shell / zsh blocks from a
+// markdown string and returns each block as a trimmed string.
+func extractShellBlocks(response string) []string {
+	var blocks []string
+	lines := strings.Split(response, "\n")
+	inBlock := false
+	var cur strings.Builder
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock {
+			switch trimmed {
+			case "```bash", "```sh", "```shell", "```zsh":
+				inBlock = true
+				cur.Reset()
+			}
+		} else {
+			if trimmed == "```" {
+				if block := strings.TrimSpace(cur.String()); block != "" {
+					blocks = append(blocks, block)
+				}
+				inBlock = false
+			} else {
+				if cur.Len() > 0 {
+					cur.WriteByte('\n')
+				}
+				cur.WriteString(line)
+			}
+		}
+	}
+	return blocks
+}
+
+// runShellBlock executes a multi-line shell script via bash and returns
+// combined stdout+stderr as a string.
+func runShellBlock(cmd string) string {
+	out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+	result := strings.TrimSpace(string(out))
+	if err != nil {
+		if result != "" {
+			return fmt.Sprintf("✗ %s\n%s", err.Error(), result)
+		}
+		return "✗ " + err.Error()
+	}
+	if result == "" {
+		return "✓ (done, no output)"
+	}
+	return result
 }
 
 // ── Markdown renderer ────────────────────────────────────────────────────────

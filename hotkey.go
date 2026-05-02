@@ -1,6 +1,6 @@
 package main
 
-// hotkey.go - listens for Ctrl+Space and Alt+Space globally using XGrabKey
+// hotkey.go - listens for Ctrl+Space and Ctrl+Alt+Space globally using XGrabKey
 
 /*
 #cgo pkg-config: x11 xtst
@@ -35,7 +35,7 @@ static void ungrab_space(Display *dpy, Window root, KeyCode space, unsigned int 
 
 static int close_hotkey(Display *dpy, Window root, KeyCode space, int hotkey) {
     ungrab_space(dpy, root, space, ControlMask);
-    ungrab_space(dpy, root, space, Mod1Mask);
+    ungrab_space(dpy, root, space, ControlMask | Mod1Mask);
     XCloseDisplay(dpy);
     return hotkey;
 }
@@ -48,7 +48,7 @@ int wait_for_hotkey() {
     KeyCode space = XKeysymToKeycode(dpy, XK_space);
 
     grab_space(dpy, root, space, ControlMask);
-    grab_space(dpy, root, space, Mod1Mask);
+    grab_space(dpy, root, space, ControlMask | Mod1Mask);
     XSelectInput(dpy, root, KeyPressMask);
 
     XEvent ev;
@@ -63,11 +63,11 @@ int wait_for_hotkey() {
         if (ke->keycode != space) {
             continue;
         }
+        if (state == (ControlMask | Mod1Mask)) {
+            return close_hotkey(dpy, root, space, 2);
+        }
         if (state == ControlMask) {
             return close_hotkey(dpy, root, space, 1);
-        }
-        if (state == Mod1Mask) {
-            return close_hotkey(dpy, root, space, 2);
         }
     }
 }

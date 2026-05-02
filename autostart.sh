@@ -78,7 +78,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  Gymnott AI is now running in the background"
 echo "  It will auto-start on every login"
 echo ""
-echo "  Hotkey:  Ctrl+Space"
+echo "  Hotkeys: Ctrl+Space (overlay), Ctrl+Alt+Space (quick tooltip ask)"
 echo ""
 echo "  Manage:"
 echo "    systemctl --user status gymnott_ai"

@@ -3,6 +3,7 @@ package main
 // overlay.go - always-on-top floating input + response window
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -19,8 +20,10 @@ var textExtractPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_text_extract
 var cropPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_crop_pref"
 var tooltipModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_pref"
 var tooltipTimeoutPrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_tooltip_timeout_pref"
+var agenticModePrefsFile = os.Getenv("HOME") + "/.config/gymnott_ai_agentic_pref"
 var tooltipModeCheck *gtk.CheckButton
 var cropCheckGlobal *gtk.CheckButton
+var agenticModeCheck *gtk.CheckButton
 
 func loadBoolPref(path string, defaultValue bool) bool {
 	data, err := os.ReadFile(path)
@@ -108,6 +111,21 @@ func saveTooltipTimeoutPref(v int) {
 	saveIntPref(tooltipTimeoutPrefsFile, v)
 }
 
+func loadAgenticModePref() bool {
+	return loadBoolPref(agenticModePrefsFile, false)
+}
+
+func saveAgenticModePref(v bool) {
+	saveBoolPref(agenticModePrefsFile, v)
+}
+
+func getAgenticMode() bool {
+	if agenticModeCheck == nil {
+		return loadAgenticModePref()
+	}
+	return agenticModeCheck.GetActive()
+}
+
 func showResponseInTooltip(response string) {
 	tooltipTimeoutSecs = loadTooltipTimeoutPref()
 	showFollowerTooltip(response)
@@ -132,12 +150,92 @@ func runQuickTooltipAsk() {
 		})
 		time.Sleep(300 * time.Millisecond)
 
-		response := askAI(defaultQuickAskPrompt, true, crop, textExtract)
+		response := askAI(defaultQuickAskPrompt, true, crop, textExtract, getAgenticMode())
 		scheduleOnMain(func() {
 			setWaiting(false)
 			showResponseInTooltip(response)
 		})
 	}()
+}
+
+// showAgenticRunDialog presents a confirmation dialog listing extracted shell
+// blocks. If the user clicks Run, commands execute sequentially in a goroutine
+// and onDone is called with the combined output string.
+func showAgenticRunDialog(parent *gtk.Window, commands []string, onDone func(output string)) {
+	dlg, _ := gtk.DialogNew()
+	dlg.SetTitle("▶ Run commands?")
+	dlg.SetTransientFor(parent)
+	dlg.SetModal(true)
+	dlg.SetDefaultSize(600, 340)
+
+	content, _ := dlg.GetContentArea()
+	content.SetSpacing(0)
+
+	dlgCss, _ := gtk.CssProviderNew()
+	dlgCss.LoadFromData(`
+		window { background-color: #1a1a2e; }
+		label { color: #e0e0f0; font-size: 12px; margin: 8px 14px 4px 14px; }
+		textview { background-color: #0d0d1a; color: #c8ffc8; font-family: monospace; font-size: 12px; padding: 8px; }
+		textview text { background-color: #0d0d1a; color: #c8ffc8; }
+		button { font-size: 12px; padding: 5px 16px; }
+	`)
+	dlgScreen := dlg.GetScreen()
+	gtk.AddProviderForScreen(dlgScreen, dlgCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+	lbl, _ := gtk.LabelNew(fmt.Sprintf("Agentic mode detected %d command block(s). Review and run?", len(commands)))
+	lbl.SetXAlign(0)
+	content.PackStart(lbl, false, false, 0)
+
+	cmdText := ""
+	for i, c := range commands {
+		if i > 0 {
+			cmdText += "\n\n# ── block " + fmt.Sprintf("%d", i+1) + " ──\n"
+		}
+		cmdText += c
+	}
+
+	tv, _ := gtk.TextViewNew()
+	tv.SetEditable(false)
+	tv.SetMonospace(true)
+	tv.SetLeftMargin(8)
+	tv.SetRightMargin(8)
+	tv.SetTopMargin(6)
+	tv.SetBottomMargin(6)
+	tbuf, _ := tv.GetBuffer()
+	tbuf.SetText(cmdText)
+
+	scroll, _ := gtk.ScrolledWindowNew(nil, nil)
+	scroll.SetPolicy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+	scroll.Add(tv)
+	scroll.SetSizeRequest(-1, 220)
+	scroll.SetMarginStart(14)
+	scroll.SetMarginEnd(14)
+	scroll.SetMarginBottom(8)
+	content.PackStart(scroll, true, true, 0)
+
+	dlg.AddButton("Cancel", gtk.RESPONSE_CANCEL)
+	dlg.AddButton("▶ Run all", gtk.RESPONSE_ACCEPT)
+	dlg.ShowAll()
+
+	resp := dlg.Run()
+	dlg.Destroy()
+
+	if gtk.ResponseType(resp) == gtk.RESPONSE_ACCEPT {
+		go func() {
+			var sb strings.Builder
+			sb.WriteString("\n\n─── Execution output ───\n")
+			for _, cmd := range commands {
+				firstLine := strings.SplitN(cmd, "\n", 2)[0]
+				sb.WriteString(fmt.Sprintf("\n$ %s\n", firstLine))
+				if strings.Contains(cmd, "\n") {
+					sb.WriteString("(+ more lines)\n")
+				}
+				sb.WriteString(runShellBlock(cmd))
+				sb.WriteByte('\n')
+			}
+			onDone(sb.String())
+		}()
+	}
 }
 
 func applyCSS() {
@@ -314,6 +412,13 @@ func showOverlay() {
 	tooltipCtx, _ := tooltipModeCheck.GetStyleContext()
 	tooltipCtx.AddProvider(tooltipCss, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+	agenticModeCheck, _ = gtk.CheckButtonNewWithLabel("🤖 Agentic")
+	agenticModeCheck.SetActive(loadAgenticModePref())
+	agenticModeCheck.SetTooltipText("Action-oriented mode: asks AI for safe, executable steps and commands")
+	agenticModeCheck.Connect("toggled", func() {
+		saveAgenticModePref(agenticModeCheck.GetActive())
+	})
+
 	// Timeout spin button (seconds)
 	tooltipTimeoutSpin, _ := gtk.SpinButtonNewWithRange(5, 300, 5)
 	tooltipTimeoutSpin.SetValue(float64(tooltipTimeoutSecs))
@@ -341,6 +446,7 @@ func showOverlay() {
 	optionsBar.PackStart(cropCheck, false, false, 0)
 	optionsBar.PackStart(textExtractCheck, false, false, 0)
 	optionsBar.PackStart(tooltipModeCheck, false, false, 0)
+	optionsBar.PackStart(agenticModeCheck, false, false, 0)
 	optionsBar.PackStart(tooltipTimeoutSpin, false, false, 0)
 	optionsBar.PackStart(secsLbl, false, false, 0)
 	optionsBar.PackEnd(sendBtn, false, false, 0)
@@ -414,7 +520,8 @@ func showOverlay() {
 				scheduleOnMain(func() { win.Hide() })
 				time.Sleep(300 * time.Millisecond)
 			}
-			response := askAI(query, withShot, crop, textExtract)
+			agentic := getAgenticMode()
+			response := askAI(query, withShot, crop, textExtract, agentic)
 			scheduleOnMain(func() {
 				setWaiting(false)
 				win.ShowAll()
@@ -427,6 +534,20 @@ func showOverlay() {
 				sendBtn.SetSensitive(true)
 				adj := responseScroll.GetVAdjustment()
 				adj.SetValue(adj.GetUpper())
+
+				// Full agentic: extract shell blocks and offer to run them
+				if agentic {
+					if cmds := extractShellBlocks(response); len(cmds) > 0 {
+						showAgenticRunDialog(win, cmds, func(output string) {
+							scheduleOnMain(func() {
+								end := buf.GetEndIter()
+								buf.Insert(end, output)
+								adj2 := responseScroll.GetVAdjustment()
+								adj2.SetValue(adj2.GetUpper())
+							})
+						})
+					}
+				}
 			})
 		}()
 	}
