@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,15 @@ const (
 	groqTextModel = "llama-3.3-70b-versatile"
 	geminiModel   = "gemini-flash-latest"
 )
+
+// groqFallbackModels is tried in order when the primary text model is rate-limited.
+var groqFallbackModels = []string{
+	"llama-3.1-8b-instant",
+	"gemma2-9b-it",
+	"llama3-8b-8192",
+}
+
+var rateLimitRe = regexp.MustCompile(`try again in (\d+(?:\.\d+)?)s`)
 
 func takeScreenshotFile(crop bool) (string, error) {
 	path := fmt.Sprintf("/tmp/ai_screenshot_%d.png", time.Now().UnixMilli())
@@ -67,16 +78,28 @@ func takeScreenshot(crop bool) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-const systemPrompt = `You are a senior technical assistant. Your output is pasted line by line into a terminal — each line is typed then Enter is pressed.
-STRICT rules:
-- Output ONLY raw commands and # comments — no markdown, no code fences, no backticks wrapping the output
-- NEVER use interactive wizards or commands that open a sub-prompt (e.g. never use '/ip hotspot setup' — use '/ip hotspot add' with explicit parameters instead)
-- # comments must be short labels only: e.g. # create pool, # add user. Never write sentences in comments
-- Placeholders the user must change: write inline as <placeholder>
-- Every command must be complete and runnable on its own line
-- No numbering, no bullets, no blank prose lines
-- Never truncate or skip steps — write every command in full
-- Assume Linux terminal unless context says otherwise (MikroTik = RouterOS CLI)`
+const systemPrompt = `You are a senior technical assistant for a Linux desktop helper.
+Respond in the format that best fits the request: commands, explanations, short step-by-step instructions, bullets, or links.
+Rules:
+- Prefer concise, directly actionable answers.
+- Include commands when they help, but do not force a command-only response.
+- Use markdown when it improves readability.
+- Include URLs or references when they are genuinely useful.
+- Use <placeholder> for values the user must replace.
+- Avoid interactive wizards when a non-interactive command or explicit instructions are available.
+- If the screen shows an error, explain the likely cause and the next practical step.`
+
+const agenticSystemPrompt = `You are a senior Linux automation assistant in AGENTIC MODE.
+Return practical, executable actions and be explicit about assumptions.
+Rules:
+- Prefer non-interactive commands and deterministic scripts.
+- Use markdown with a short plan plus code blocks for commands.
+- Include verification commands after major steps.
+- Use <placeholder> for values the user must replace.
+- Refuse or redirect requests for piracy, malware, credential theft, data exfiltration, or unauthorized scanning/access.
+- For security testing, require explicit ownership/authorization and stay defensive.`
+
+const defaultQuickAskPrompt = "Analyze this screen or selected region. Explain what it shows, point out errors or important details, and give the most useful next steps. Include commands, instructions, or links only when they help."
 
 // chatHistory holds the conversation turns for multi-turn context.
 // Each entry is a map ready to be serialised into the messages array.
@@ -120,21 +143,9 @@ func getGeminiAPIKey() string {
 	return ""
 }
 
-func stripFences(s string) string {
-	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines))
-	for _, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "```") {
-			continue
-		}
-		out = append(out, l)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
-func askAI(query string, withScreenshot, crop, textExtract bool) string {
+func askAI(query string, withScreenshot, crop, textExtract, agentic bool) string {
 	if withScreenshot && textExtract {
-		return askGeminiWithExtractedText(query, crop)
+		return askGeminiWithExtractedText(query, crop, agentic)
 	}
 
 	apiKey := getAPIKey()
@@ -169,8 +180,13 @@ func askAI(query string, withScreenshot, crop, textExtract bool) string {
 
 	chatHistory = append(chatHistory, userMsg)
 
+	system := systemPrompt
+	if agentic {
+		system = agenticSystemPrompt
+	}
+
 	messages := append([]map[string]any{
-		{"role": "system", "content": systemPrompt},
+		{"role": "system", "content": system},
 	}, chatHistory...)
 
 	payload := map[string]any{
@@ -181,7 +197,7 @@ func askAI(query string, withScreenshot, crop, textExtract bool) string {
 		"stream":                false,
 	}
 
-	result := stripFences(callGroq(payload, apiKey))
+	result := strings.TrimSpace(callGroq(payload, apiKey))
 
 	// Append assistant reply to history (text only — vision content not kept)
 	chatHistory = append(chatHistory, map[string]any{
@@ -192,7 +208,7 @@ func askAI(query string, withScreenshot, crop, textExtract bool) string {
 	return result
 }
 
-func askGeminiWithExtractedText(query string, crop bool) string {
+func askGeminiWithExtractedText(query string, crop bool, agentic bool) string {
 	apiKey := getGeminiAPIKey()
 	if apiKey == "" {
 		return "Error: GEMINI_API_KEY environment variable not set."
@@ -216,7 +232,12 @@ func askGeminiWithExtractedText(query string, crop bool) string {
 	if userPrompt == "" {
 		userPrompt = "Use the extracted screen text to help me."
 	}
-	prompt := systemPrompt +
+	system := systemPrompt
+	if agentic {
+		system = agenticSystemPrompt
+	}
+
+	prompt := system +
 		"\n\nUser request:\n" + userPrompt +
 		"\n\nExtracted text from screenshot:\n" + extractedText
 
@@ -230,7 +251,7 @@ func askGeminiWithExtractedText(query string, crop bool) string {
 		},
 	}
 
-	result := stripFences(callGemini(payload, apiKey))
+	result := strings.TrimSpace(callGemini(payload, apiKey))
 	chatHistory = append(chatHistory,
 		map[string]any{"role": "user", "content": prompt},
 		map[string]any{"role": "assistant", "content": result},
@@ -246,7 +267,7 @@ func extractTextFromImage(path string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func callGroq(payload map[string]any, apiKey string) string {
+func groqHTTP(payload map[string]any, apiKey string) string {
 	body, _ := json.Marshal(payload)
 	tmpFile := fmt.Sprintf("/tmp/ai_req_%d.json", time.Now().UnixMilli())
 	os.WriteFile(tmpFile, body, 0600)
@@ -261,6 +282,45 @@ func callGroq(payload map[string]any, apiKey string) string {
 		return "curl error: " + err.Error()
 	}
 	return parseGroqResponse(out)
+}
+
+// callGroq sends the request and handles rate-limit responses by waiting the
+// suggested duration and retrying, then falling back through groqFallbackModels.
+func callGroq(payload map[string]any, apiKey string) string {
+	const maxAttempts = 4
+	fallbackIdx := 0
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result := groqHTTP(payload, apiKey)
+
+		// Not a rate-limit error — return immediately.
+		if !strings.HasPrefix(result, "API Error: Rate limit") {
+			return result
+		}
+
+		// Parse suggested wait from the error message.
+		waitSecs := 15.0
+		if m := rateLimitRe.FindStringSubmatch(result); len(m) == 2 {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				waitSecs = v + 1.0 // small buffer
+			}
+		}
+
+		if attempt < maxAttempts {
+			// Switch to a fallback model after the first failure.
+			if fallbackIdx < len(groqFallbackModels) {
+				payload["model"] = groqFallbackModels[fallbackIdx]
+				fallbackIdx++
+				waitSecs = 2.0 // fallback model — different quota, minimal wait
+			}
+			time.Sleep(time.Duration(waitSecs * float64(time.Second)))
+			continue
+		}
+
+		// All attempts exhausted.
+		return fmt.Sprintf("⚠ All Groq models rate-limited. Last error: %s", result)
+	}
+	return "⚠ callGroq: unexpected exit"
 }
 
 func callGemini(payload map[string]any, apiKey string) string {
@@ -336,6 +396,57 @@ func parseGroqResponse(data []byte) string {
 		return "No response from API."
 	}
 	return resp.Choices[0].Message.Content
+}
+
+// ── Shell block extraction + execution ──────────────────────────────────────
+
+// extractShellBlocks parses fenced ```bash / sh / shell / zsh blocks from a
+// markdown string and returns each block as a trimmed string.
+func extractShellBlocks(response string) []string {
+	var blocks []string
+	lines := strings.Split(response, "\n")
+	inBlock := false
+	var cur strings.Builder
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock {
+			switch trimmed {
+			case "```bash", "```sh", "```shell", "```zsh":
+				inBlock = true
+				cur.Reset()
+			}
+		} else {
+			if trimmed == "```" {
+				if block := strings.TrimSpace(cur.String()); block != "" {
+					blocks = append(blocks, block)
+				}
+				inBlock = false
+			} else {
+				if cur.Len() > 0 {
+					cur.WriteByte('\n')
+				}
+				cur.WriteString(line)
+			}
+		}
+	}
+	return blocks
+}
+
+// runShellBlock executes a multi-line shell script via bash and returns
+// combined stdout+stderr as a string.
+func runShellBlock(cmd string) string {
+	out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+	result := strings.TrimSpace(string(out))
+	if err != nil {
+		if result != "" {
+			return fmt.Sprintf("✗ %s\n%s", err.Error(), result)
+		}
+		return "✗ " + err.Error()
+	}
+	if result == "" {
+		return "✓ (done, no output)"
+	}
+	return result
 }
 
 // ── Markdown renderer ────────────────────────────────────────────────────────

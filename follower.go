@@ -53,11 +53,9 @@ func pasteTooltipText() {
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		for _, line := range strings.Split(text, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-				continue
+			if line != "" {
+				exec.Command("xdotool", "type", "--clearmodifiers", "--", line).Run()
 			}
-			exec.Command("xdotool", "type", "--clearmodifiers", "--", line).Run()
 			exec.Command("xdotool", "key", "Return").Run()
 		}
 	}()
