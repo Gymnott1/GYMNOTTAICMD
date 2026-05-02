@@ -10,6 +10,8 @@
 
 A lightweight, always-on Linux desktop AI assistant built in Go. Press `Ctrl+Space` to open the full overlay or `Ctrl+Alt+Space` to send a quick screenshot-based ask straight to the tooltip when tooltip mode is enabled.
 
+![](gym.png)
+
 ---
 
 ## ✨ Features
